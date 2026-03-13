@@ -33,6 +33,11 @@ body {
   height: 100%;
 }
 
+.hover-surface {
+  position: absolute;
+  inset: 0;
+}
+
 .guide-overlay {
   position: absolute;
   inset: 0;
