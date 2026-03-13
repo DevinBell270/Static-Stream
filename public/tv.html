@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Static Stream TV</title>
+    <link rel="stylesheet" href="/tv.css" />
+  </head>
+  <body>
+    <main class="tv-shell">
+      <div id="player" class="player-frame" aria-label="Static Stream player"></div>
+
+      <section id="guide-overlay" class="guide-overlay visible">
+        <div class="guide-header">
+          <div>
+            <p class="guide-kicker">Static Stream</p>
+            <h1>Live TV Guide</h1>
+            <p id="guide-subtitle" class="guide-subtitle">
+              Move your mouse to reveal the guide and jump between custom channels.
+            </p>
+          </div>
+          <a class="admin-link" href="/admin.html">Open Admin</a>
+        </div>
+
+        <div class="guide-layout">
+          <section class="guide-panel">
+            <h2>Categories</h2>
+            <div id="categories-list" class="category-buttons"></div>
+          </section>
+
+          <section class="guide-panel now-playing-panel">
+            <h2>Now Playing</h2>
+            <div class="now-playing-card">
+              <p id="current-category" class="current-category">No category selected</p>
+              <h3 id="current-title">Choose a category to tune in.</h3>
+              <p id="current-meta" class="current-meta">Static Stream syncs each category to the same live timeline for every viewer.</p>
+            </div>
+            <div id="tv-status" class="tv-status" role="status" aria-live="polite"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="/tv.js" defer></script>
+  </body>
+</html>

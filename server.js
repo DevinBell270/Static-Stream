@@ -1,0 +1,633 @@
+const fs = require("fs/promises");
+const path = require("path");
+
+const dotenv = require("dotenv");
+const express = require("express");
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
+const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
+
+const ROOT_DIR = __dirname;
+const PUBLIC_DIR = path.join(ROOT_DIR, "public");
+const CONFIG_PATH = path.join(ROOT_DIR, "config.json");
+const DATABASE_PATH = path.join(ROOT_DIR, "database.json");
+const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
+
+const DEFAULT_CONFIG = {
+  categories: {
+    "Theme Parks": [{ channelId: "UC_BELLS_IN_DISNEY_PLACEHOLDER" }],
+    "Kentucky Outdoors": [{ channelId: "UC_KENTUCKY_OUTDOORS_PLACEHOLDER" }],
+  },
+};
+
+const DEFAULT_DATABASE = {
+  updatedAt: null,
+  epochStart: null,
+  refreshSource: null,
+  categories: {},
+};
+
+let refreshPromise = null;
+
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(PUBLIC_DIR));
+
+app.get("/", (request, response) => {
+  response.redirect("/tv.html");
+});
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function createStatusError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function normalizeHandle(value, categoryName) {
+  const trimmedHandle = String(value || "").trim();
+
+  if (!trimmedHandle) {
+    return null;
+  }
+
+  if (!trimmedHandle.startsWith("@") || trimmedHandle.length < 2) {
+    throw createStatusError(
+      `Category "${categoryName}" contains an invalid YouTube handle. Handles must start with "@".`,
+      400,
+    );
+  }
+
+  return trimmedHandle;
+}
+
+function normalizeChannelId(value) {
+  const trimmedChannelId = String(value || "").trim();
+  return trimmedChannelId || null;
+}
+
+function normalizeChannelEntry(channelInput, categoryName) {
+  if (typeof channelInput === "string") {
+    const trimmedChannel = String(channelInput || "").trim();
+
+    if (!trimmedChannel) {
+      return null;
+    }
+
+    return trimmedChannel.startsWith("@")
+      ? { handle: normalizeHandle(trimmedChannel, categoryName) }
+      : { channelId: trimmedChannel };
+  }
+
+  if (!isPlainObject(channelInput)) {
+    throw createStatusError(
+      `Category "${categoryName}" must contain channel IDs or handle objects.`,
+      400,
+    );
+  }
+
+  const handle = normalizeHandle(channelInput.handle, categoryName);
+  const channelId = normalizeChannelId(channelInput.channelId);
+
+  if (!handle && !channelId) {
+    throw createStatusError(
+      `Category "${categoryName}" contains an entry that is missing both handle and channelId.`,
+      400,
+    );
+  }
+
+  return {
+    ...(handle ? { handle } : {}),
+    ...(channelId ? { channelId } : {}),
+  };
+}
+
+function getChannelEntryKeys(channelEntry) {
+  const keys = [];
+
+  if (channelEntry.handle) {
+    keys.push(`handle:${channelEntry.handle.toLowerCase()}`);
+  }
+
+  if (channelEntry.channelId) {
+    keys.push(`id:${channelEntry.channelId}`);
+  }
+
+  return keys;
+}
+
+function dedupeChannelEntries(channelEntries) {
+  const dedupedEntries = [];
+  const entryByKey = new Map();
+
+  channelEntries.forEach((channelEntry) => {
+    const entryKeys = getChannelEntryKeys(channelEntry);
+    const existingEntry = entryKeys
+      .map((entryKey) => entryByKey.get(entryKey))
+      .find(Boolean);
+
+    if (!existingEntry) {
+      const nextEntry = { ...channelEntry };
+      dedupedEntries.push(nextEntry);
+      getChannelEntryKeys(nextEntry).forEach((entryKey) => {
+        entryByKey.set(entryKey, nextEntry);
+      });
+      return;
+    }
+
+    if (!existingEntry.handle && channelEntry.handle) {
+      existingEntry.handle = channelEntry.handle;
+    }
+
+    if (!existingEntry.channelId && channelEntry.channelId) {
+      existingEntry.channelId = channelEntry.channelId;
+    }
+
+    getChannelEntryKeys(existingEntry).forEach((entryKey) => {
+      entryByKey.set(entryKey, existingEntry);
+    });
+  });
+
+  return dedupedEntries;
+}
+
+async function ensureFile(filePath, fallbackValue) {
+  try {
+    await fs.access(filePath);
+  } catch (error) {
+    await writeJson(filePath, fallbackValue);
+  }
+}
+
+async function writeJson(filePath, data) {
+  await fs.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+async function readJson(filePath, fallbackValue) {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      await writeJson(filePath, fallbackValue);
+      return fallbackValue;
+    }
+
+    throw error;
+  }
+}
+
+async function ensureDataFiles() {
+  await ensureFile(CONFIG_PATH, DEFAULT_CONFIG);
+  await ensureFile(DATABASE_PATH, DEFAULT_DATABASE);
+}
+
+function normalizeConfig(input) {
+  if (!isPlainObject(input) || !isPlainObject(input.categories)) {
+    throw createStatusError("Config payload must contain a categories object.", 400);
+  }
+
+  const categories = {};
+
+  for (const [categoryName, channelEntries] of Object.entries(input.categories)) {
+    const trimmedName = String(categoryName || "").trim();
+
+    if (!trimmedName) {
+      continue;
+    }
+
+    if (!Array.isArray(channelEntries)) {
+      throw createStatusError(
+        `Category "${trimmedName}" must contain an array of channel entries.`,
+        400,
+      );
+    }
+
+    const uniqueChannelEntries = dedupeChannelEntries(
+      channelEntries
+        .map((channelEntry) => normalizeChannelEntry(channelEntry, trimmedName))
+        .filter(Boolean),
+    );
+
+    categories[trimmedName] = uniqueChannelEntries;
+  }
+
+  return { categories };
+}
+
+async function readConfig() {
+  const config = await readJson(CONFIG_PATH, DEFAULT_CONFIG);
+  return normalizeConfig(config);
+}
+
+async function readDatabase() {
+  return readJson(DATABASE_PATH, DEFAULT_DATABASE);
+}
+
+function getWeekEpoch(date = new Date()) {
+  const epoch = new Date(date);
+  epoch.setHours(0, 0, 0, 0);
+  epoch.setDate(epoch.getDate() - epoch.getDay());
+  return epoch;
+}
+
+function parseIso8601Duration(isoDuration) {
+  if (!isoDuration) {
+    return 0;
+  }
+
+  const match = /^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i.exec(isoDuration);
+
+  if (!match) {
+    return 0;
+  }
+
+  const days = Number.parseInt(match[1] || "0", 10);
+  const hours = Number.parseInt(match[2] || "0", 10);
+  const minutes = Number.parseInt(match[3] || "0", 10);
+  const seconds = Number.parseInt(match[4] || "0", 10);
+
+  return (((days * 24) + hours) * 60 * 60) + (minutes * 60) + seconds;
+}
+
+function selectThumbnail(thumbnails = {}) {
+  return (
+    thumbnails.maxres?.url ||
+    thumbnails.standard?.url ||
+    thumbnails.high?.url ||
+    thumbnails.medium?.url ||
+    thumbnails.default?.url ||
+    ""
+  );
+}
+
+async function fetchYouTubeJson(endpoint, searchParams) {
+  const url = new URL(`${YOUTUBE_API_BASE}/${endpoint}`);
+
+  Object.entries(searchParams).forEach(([key, value]) => {
+    url.searchParams.set(key, value);
+  });
+
+  let response;
+
+  try {
+    response = await fetch(url);
+  } catch (error) {
+    const causeMessage = error.cause?.message ? ` Cause: ${error.cause.message}` : "";
+    throw new Error(`YouTube API fetch failed for ${endpoint}: ${error.message}.${causeMessage}`);
+  }
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = payload.error?.message || `YouTube API request failed with ${response.status}.`;
+    throw new Error(message);
+  }
+
+  return payload;
+}
+
+async function resolveChannelIdFromHandle(handle, apiKey) {
+  const payload = await fetchYouTubeJson("channels", {
+    part: "id",
+    forHandle: handle.replace(/^@/, ""),
+    key: apiKey,
+  });
+
+  const channelId = payload.items?.[0]?.id;
+
+  if (!channelId) {
+    throw createStatusError(`No YouTube channel was found for handle "${handle}".`, 400);
+  }
+
+  return channelId;
+}
+
+async function resolveConfigChannels(config) {
+  const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
+  const categories = {};
+
+  for (const [categoryName, channelEntries] of Object.entries(config.categories)) {
+    categories[categoryName] = [];
+
+    for (const channelEntry of channelEntries) {
+      if (channelEntry.channelId || !channelEntry.handle) {
+        categories[categoryName].push(channelEntry);
+        continue;
+      }
+
+      if (!apiKey) {
+        throw createStatusError("YOUTUBE_API_KEY is required to resolve YouTube handles.", 500);
+      }
+
+      const channelId = await resolveChannelIdFromHandle(channelEntry.handle, apiKey);
+      categories[categoryName].push({
+        ...channelEntry,
+        channelId,
+      });
+    }
+  }
+
+  return normalizeConfig({ categories });
+}
+
+async function getUploadsPlaylistId(channelId, apiKey) {
+  const payload = await fetchYouTubeJson("channels", {
+    part: "contentDetails",
+    id: channelId,
+    key: apiKey,
+  });
+
+  const uploadsId = payload.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+
+  if (!uploadsId) {
+    throw new Error(`No uploads playlist found for channel "${channelId}".`);
+  }
+
+  return uploadsId;
+}
+
+async function getRecentUploadIds(uploadsPlaylistId, apiKey) {
+  const payload = await fetchYouTubeJson("playlistItems", {
+    part: "contentDetails,snippet",
+    playlistId: uploadsPlaylistId,
+    maxResults: "50",
+    key: apiKey,
+  });
+
+  return (payload.items || [])
+    .map((item) => item.contentDetails?.videoId)
+    .filter(Boolean);
+}
+
+async function getVideoDetails(videoIds, apiKey) {
+  if (videoIds.length === 0) {
+    return [];
+  }
+
+  const payload = await fetchYouTubeJson("videos", {
+    part: "contentDetails,snippet",
+    id: videoIds.join(","),
+    maxResults: String(videoIds.length),
+    key: apiKey,
+  });
+
+  return (payload.items || [])
+    .map((item) => {
+      const durationSeconds = parseIso8601Duration(item.contentDetails?.duration);
+
+      if (!durationSeconds) {
+        return null;
+      }
+
+      return {
+        videoId: item.id,
+        title: item.snippet?.title || "Untitled Video",
+        thumbnail: selectThumbnail(item.snippet?.thumbnails),
+        durationSeconds,
+        publishedAt: item.snippet?.publishedAt || null,
+        channelId: item.snippet?.channelId || null,
+        channelTitle: item.snippet?.channelTitle || null,
+      };
+    })
+    .filter(Boolean);
+}
+
+async function fetchChannelVideos(channelId, apiKey) {
+  const uploadsPlaylistId = await getUploadsPlaylistId(channelId, apiKey);
+  const videoIds = await getRecentUploadIds(uploadsPlaylistId, apiKey);
+  return getVideoDetails(videoIds, apiKey);
+}
+
+async function buildDatabase(refreshSource = "manual") {
+  const config = await readConfig();
+  const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
+  const epoch = getWeekEpoch();
+  const categories = {};
+
+  if (!apiKey) {
+    for (const [categoryName, channelEntries] of Object.entries(config.categories)) {
+      categories[categoryName] = {
+        channelIds: channelEntries
+          .map((channelEntry) => channelEntry.channelId)
+          .filter(Boolean),
+        totalDurationSeconds: 0,
+        videos: [],
+        errors: ["Missing YOUTUBE_API_KEY in .env."],
+      };
+    }
+
+    return {
+      updatedAt: new Date().toISOString(),
+      epochStart: epoch.toISOString(),
+      refreshSource,
+      categories,
+    };
+  }
+
+  for (const [categoryName, channelEntries] of Object.entries(config.categories)) {
+    const collectedVideos = [];
+    const seenVideoIds = new Set();
+    const categoryErrors = [];
+
+    for (const channelEntry of channelEntries) {
+      if (!channelEntry.channelId) {
+        categoryErrors.push(
+          `Channel ${channelEntry.handle || "unknown"} is missing a saved channel ID. Save the config again to resolve it.`,
+        );
+        continue;
+      }
+
+      try {
+        const channelVideos = await fetchChannelVideos(channelEntry.channelId, apiKey);
+
+        channelVideos.forEach((video) => {
+          if (seenVideoIds.has(video.videoId)) {
+            return;
+          }
+
+          seenVideoIds.add(video.videoId);
+          collectedVideos.push(video);
+        });
+      } catch (error) {
+        categoryErrors.push(`Channel ${channelEntry.handle || channelEntry.channelId}: ${error.message}`);
+      }
+    }
+
+    collectedVideos.sort((left, right) => {
+      const leftTime = new Date(left.publishedAt || 0).getTime();
+      const rightTime = new Date(right.publishedAt || 0).getTime();
+      return rightTime - leftTime;
+    });
+
+    categories[categoryName] = {
+      channelIds: channelEntries
+        .map((channelEntry) => channelEntry.channelId)
+        .filter(Boolean),
+      totalDurationSeconds: collectedVideos.reduce(
+        (total, video) => total + video.durationSeconds,
+        0,
+      ),
+      videos: collectedVideos,
+      errors: categoryErrors,
+    };
+  }
+
+  return {
+    updatedAt: new Date().toISOString(),
+    epochStart: epoch.toISOString(),
+    refreshSource,
+    categories,
+  };
+}
+
+async function refreshDatabase(refreshSource) {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    const database = await buildDatabase(refreshSource);
+    await writeJson(DATABASE_PATH, database);
+    return database;
+  })().finally(() => {
+    refreshPromise = null;
+  });
+
+  return refreshPromise;
+}
+
+function schedulePeriodicRefresh() {
+  setInterval(() => {
+    refreshDatabase("scheduled_interval").catch((error) => {
+      console.error("Failed scheduled Static Stream refresh:", error.message);
+    });
+  }, REFRESH_INTERVAL_MS);
+}
+
+function resolveLiveSlot(videos, liveOffsetSeconds) {
+  let runningDuration = 0;
+
+  for (let index = 0; index < videos.length; index += 1) {
+    const video = videos[index];
+    const nextDuration = runningDuration + video.durationSeconds;
+
+    if (liveOffsetSeconds < nextDuration) {
+      return {
+        currentIndex: index,
+        video,
+        startSeconds: liveOffsetSeconds - runningDuration,
+      };
+    }
+
+    runningDuration = nextDuration;
+  }
+
+  return {
+    currentIndex: 0,
+    video: videos[0],
+    startSeconds: 0,
+  };
+}
+
+app.get("/api/config", async (request, response) => {
+  try {
+    const config = await readConfig();
+    response.json(config);
+  } catch (error) {
+    response.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/config", async (request, response) => {
+  try {
+    const nextConfig = await resolveConfigChannels(normalizeConfig(request.body));
+    await writeJson(CONFIG_PATH, nextConfig);
+    const database = await refreshDatabase("config_update");
+
+    response.json({
+      success: true,
+      config: nextConfig,
+      guide: database,
+    });
+  } catch (error) {
+    const statusCode = error.statusCode || 500;
+    response.status(statusCode).json({ error: error.message });
+  }
+});
+
+app.get("/api/guide", async (request, response) => {
+  try {
+    const database = await readDatabase();
+    response.json(database);
+  } catch (error) {
+    response.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/tune-in/:category", async (request, response) => {
+  try {
+    const database = await readDatabase();
+    const categoryName = request.params.category;
+    const category = database.categories?.[categoryName];
+
+    if (!category) {
+      response.status(404).json({ error: `Category "${categoryName}" was not found.` });
+      return;
+    }
+
+    if (!Array.isArray(category.videos) || category.videos.length === 0 || !category.totalDurationSeconds) {
+      response.status(404).json({
+        error: `Category "${categoryName}" does not have any playable videos yet.`,
+      });
+      return;
+    }
+
+    const epoch = getWeekEpoch();
+    const elapsedSeconds = Math.floor((Date.now() - epoch.getTime()) / 1000);
+    const liveOffsetSeconds = ((elapsedSeconds % category.totalDurationSeconds) + category.totalDurationSeconds)
+      % category.totalDurationSeconds;
+    const liveSlot = resolveLiveSlot(category.videos, liveOffsetSeconds);
+
+    response.json({
+      category: categoryName,
+      playlistDurationSeconds: category.totalDurationSeconds,
+      liveOffsetSeconds,
+      epochStart: epoch.toISOString(),
+      currentIndex: liveSlot.currentIndex,
+      videoId: liveSlot.video.videoId,
+      title: liveSlot.video.title,
+      thumbnail: liveSlot.video.thumbnail,
+      durationSeconds: liveSlot.video.durationSeconds,
+      startSeconds: liveSlot.startSeconds,
+    });
+  } catch (error) {
+    response.status(500).json({ error: error.message });
+  }
+});
+
+async function start() {
+  await ensureDataFiles();
+  schedulePeriodicRefresh();
+
+  try {
+    await refreshDatabase("startup");
+  } catch (error) {
+    console.error("Failed to refresh Static Stream database:", error.message);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Static Stream is running at http://localhost:${PORT}`);
+  });
+}
+
+start().catch((error) => {
+  console.error("Unable to start Static Stream:", error);
+  process.exit(1);
+});
