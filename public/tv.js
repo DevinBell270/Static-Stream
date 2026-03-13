@@ -10,6 +10,7 @@ const state = {
 
 const elements = {
   overlay: document.querySelector("#guide-overlay"),
+  hoverSurface: document.querySelector("#hover-surface"),
   categoriesList: document.querySelector("#categories-list"),
   currentCategory: document.querySelector("#current-category"),
   currentTitle: document.querySelector("#current-title"),
@@ -216,7 +217,14 @@ async function tuneIntoCategory(categoryName) {
   }
 }
 
+function initializeInteractions() {
+  elements.hoverSurface.addEventListener("mousemove", showOverlay);
+  elements.overlay.addEventListener("mousemove", showOverlay);
+  window.addEventListener("keydown", showOverlay);
+}
+
 async function initializeTv() {
+  initializeInteractions();
   showOverlay();
   setStatus("Loading TV guide...");
 
@@ -245,8 +253,5 @@ async function initializeTv() {
     setStatus(error.message);
   }
 }
-
-window.addEventListener("mousemove", showOverlay);
-window.addEventListener("keydown", showOverlay);
 
 initializeTv();
