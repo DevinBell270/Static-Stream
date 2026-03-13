@@ -10,6 +10,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
 const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
+const RECENT_UPLOADS_PER_CHANNEL = 30;
+const DAILY_ROTATION_RECENT_COUNT = 2;
+const DAILY_ROTATION_RANDOM_COUNT = 3;
 
 const ROOT_DIR = __dirname;
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
@@ -267,6 +270,36 @@ function selectThumbnail(thumbnails = {}) {
   );
 }
 
+function sortVideosByPublishedAt(videos) {
+  return [...videos].sort((left, right) => {
+    const leftTime = new Date(left.publishedAt || 0).getTime();
+    const rightTime = new Date(right.publishedAt || 0).getTime();
+    return rightTime - leftTime;
+  });
+}
+
+function shuffleArray(items) {
+  const shuffledItems = [...items];
+
+  for (let index = shuffledItems.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffledItems[index], shuffledItems[swapIndex]] = [
+      shuffledItems[swapIndex],
+      shuffledItems[index],
+    ];
+  }
+
+  return shuffledItems;
+}
+
+function selectDailyRotation(channelVideos) {
+  const sortedVideos = sortVideosByPublishedAt(channelVideos);
+  const newestVideos = sortedVideos.slice(0, DAILY_ROTATION_RECENT_COUNT);
+  const rerunPool = sortedVideos.slice(DAILY_ROTATION_RECENT_COUNT);
+  const rerunVideos = shuffleArray(rerunPool).slice(0, DAILY_ROTATION_RANDOM_COUNT);
+  return [...newestVideos, ...rerunVideos];
+}
+
 async function fetchYouTubeJson(endpoint, searchParams) {
   const url = new URL(`${YOUTUBE_API_BASE}/${endpoint}`);
 
@@ -353,17 +386,22 @@ async function getUploadsPlaylistId(channelId, apiKey) {
   return uploadsId;
 }
 
-async function getRecentUploadIds(uploadsPlaylistId, apiKey) {
+async function getRecentUploadIds(
+  uploadsPlaylistId,
+  apiKey,
+  limit = RECENT_UPLOADS_PER_CHANNEL,
+) {
   const payload = await fetchYouTubeJson("playlistItems", {
     part: "contentDetails,snippet",
     playlistId: uploadsPlaylistId,
-    maxResults: "50",
+    maxResults: String(Math.max(1, Math.min(50, limit))),
     key: apiKey,
   });
 
   return (payload.items || [])
     .map((item) => item.contentDetails?.videoId)
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 async function getVideoDetails(videoIds, apiKey) {
@@ -399,9 +437,13 @@ async function getVideoDetails(videoIds, apiKey) {
     .filter(Boolean);
 }
 
-async function fetchChannelVideos(channelId, apiKey) {
+async function fetchChannelVideos(
+  channelId,
+  apiKey,
+  limit = RECENT_UPLOADS_PER_CHANNEL,
+) {
   const uploadsPlaylistId = await getUploadsPlaylistId(channelId, apiKey);
-  const videoIds = await getRecentUploadIds(uploadsPlaylistId, apiKey);
+  const videoIds = await getRecentUploadIds(uploadsPlaylistId, apiKey, limit);
   return getVideoDetails(videoIds, apiKey);
 }
 
@@ -445,9 +487,14 @@ async function buildDatabase(refreshSource = "manual") {
       }
 
       try {
-        const channelVideos = await fetchChannelVideos(channelEntry.channelId, apiKey);
+        const channelVideos = await fetchChannelVideos(
+          channelEntry.channelId,
+          apiKey,
+          RECENT_UPLOADS_PER_CHANNEL,
+        );
+        const dailyRotation = selectDailyRotation(channelVideos);
 
-        channelVideos.forEach((video) => {
+        dailyRotation.forEach((video) => {
           if (seenVideoIds.has(video.videoId)) {
             return;
           }
@@ -459,22 +506,17 @@ async function buildDatabase(refreshSource = "manual") {
         categoryErrors.push(`Channel ${channelEntry.handle || channelEntry.channelId}: ${error.message}`);
       }
     }
-
-    collectedVideos.sort((left, right) => {
-      const leftTime = new Date(left.publishedAt || 0).getTime();
-      const rightTime = new Date(right.publishedAt || 0).getTime();
-      return rightTime - leftTime;
-    });
+    const shuffledVideos = shuffleArray(collectedVideos);
 
     categories[categoryName] = {
       channelIds: channelEntries
         .map((channelEntry) => channelEntry.channelId)
         .filter(Boolean),
-      totalDurationSeconds: collectedVideos.reduce(
+      totalDurationSeconds: shuffledVideos.reduce(
         (total, video) => total + video.durationSeconds,
         0,
       ),
-      videos: collectedVideos,
+      videos: shuffledVideos,
       errors: categoryErrors,
     };
   }
