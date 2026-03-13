@@ -19,8 +19,8 @@ const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
 const DEFAULT_CONFIG = {
   categories: {
-    "Theme Parks": [{ channelId: "UC_BELLS_IN_DISNEY_PLACEHOLDER" }],
-    "Kentucky Outdoors": [{ channelId: "UC_KENTUCKY_OUTDOORS_PLACEHOLDER" }],
+    "Travel Vlogs": [{ channelId: "UC_EXAMPLE_PLACEHOLDER_1" }],
+    "Tech Reviews": [{ channelId: "UC_EXAMPLE_PLACEHOLDER_2" }],
   },
 };
 

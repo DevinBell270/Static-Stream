@@ -64,20 +64,22 @@ You do not need to manually create `config.json` or `database.json`.
 - `database.json` is auto-created by the server as the local cached guide
 - After startup, you can manage categories and channel handles from `/admin.html`
 
-The auto-generated `config.json` starts with a shape like this:
+The auto-generated `config.json` starts with placeholder entries. After you add channels via the admin dashboard, it looks like this:
 
 ```json
 {
   "categories": {
-    "Theme Parks": [
-      { "channelId": "UC_BELLS_IN_DISNEY_PLACEHOLDER" }
+    "Travel Vlogs": [
+      { "handle": "@exampletraveler", "channelId": "UCxxxxxxxxxxxxxxxxxxxxxx" }
     ],
-    "Kentucky Outdoors": [
-      { "channelId": "UC_KENTUCKY_OUTDOORS_PLACEHOLDER" }
+    "Tech Reviews": [
+      { "handle": "@exampletech", "channelId": "UCyyyyyyyyyyyyyyyyyyyy" }
     ]
   }
 }
 ```
+
+Each channel entry includes the `@handle` you entered and the `channelId` resolved by the server. Legacy entries with only `channelId` are also supported.
 
 ## Running The App
 
