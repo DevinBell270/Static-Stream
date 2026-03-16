@@ -8,6 +8,7 @@ Static Stream is a self-hosted, algorithm-free television simulator. It takes ha
 - Uses local JSON files instead of a database
 - Lets you manage categories and YouTube handles from a browser-based admin dashboard
 - Fetches recent uploads from the YouTube Data API server-side only
+- Ignores videos that are 3 minutes or shorter to keep Shorts out of the lineup
 - Builds a daily cable-style rotation with a mix of new uploads and reruns
 - Simulates a live cable channel by calculating a shared playback position from a fixed weekly epoch
 - Plays videos with the YouTube IFrame Player API
@@ -127,12 +128,13 @@ The YouTube fetch process runs only when:
 When the guide refreshes, the server builds each category like this:
 
 1. Fetch the 30 most recent uploads for every configured channel
-2. Pick a 5-video daily rotation per channel:
+2. Discard anything that is 3 minutes or shorter
+3. Pick a 5-video daily rotation per channel:
    - the 2 newest uploads
    - 3 random reruns from the remaining uploads
-3. Combine those channel rotations into one category playlist
-4. Shuffle that category playlist once with Fisher-Yates
-5. Save that exact shuffled order to `database.json`
+4. Combine those channel rotations into one category playlist
+5. Shuffle that category playlist once with Fisher-Yates
+6. Save that exact shuffled order to `database.json`
 
 That saved order stays fixed until the next refresh, so every viewer tunes into the same position in the same loop.
 
