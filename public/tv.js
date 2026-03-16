@@ -1,34 +1,82 @@
+const PIXELS_PER_MINUTE = 10;
+const MARKER_MINUTES = 30;
+const WINDOW_BEFORE_MINUTES = 180;
+const WINDOW_AFTER_MINUTES = 540;
+const CHANNEL_NUMBER_START = 101;
+const LIVE_TICK_MS = 1000;
+const SCHEDULE_REBUILD_BUFFER_MINUTES = 60;
+const OVERLAY_HIDE_DELAY_MS = 2800;
+
+const clockFormatter = new Intl.DateTimeFormat([], {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+const markerLabelFormatter = new Intl.DateTimeFormat([], {
+  hour: "numeric",
+  minute: "2-digit",
+  weekday: "short",
+});
+
 const state = {
   guide: { categories: {} },
+  rows: [],
   player: null,
   playerReady: null,
   youtubeReady: null,
   currentCategory: null,
   currentVideoId: null,
+  liveTimer: null,
   guideHideTimer: null,
+  scheduleWindowStartMs: 0,
+  scheduleWindowEndMs: 0,
+  scheduleWidthPx: 0,
+  hasCenteredOnNow: false,
+  hasUserSelectedChannel: false,
 };
 
 const elements = {
   overlay: document.querySelector("#guide-overlay"),
   hoverSurface: document.querySelector("#hover-surface"),
-  categoriesList: document.querySelector("#categories-list"),
   currentCategory: document.querySelector("#current-category"),
   currentTitle: document.querySelector("#current-title"),
   currentMeta: document.querySelector("#current-meta"),
   status: document.querySelector("#tv-status"),
   subtitle: document.querySelector("#guide-subtitle"),
+  timebarScroll: document.querySelector("#timebar-scroll"),
+  timebarTrack: document.querySelector("#timebar-track"),
+  guideGrid: document.querySelector("#guide-grid"),
+  playhead: document.querySelector("#playhead"),
 };
 
 function setStatus(message) {
   elements.status.textContent = message;
 }
 
-function showOverlay() {
-  elements.overlay.classList.add("visible");
+function clearOverlayHideTimer() {
   window.clearTimeout(state.guideHideTimer);
+  state.guideHideTimer = null;
+}
+
+function hideOverlay() {
+  if (!state.hasUserSelectedChannel) {
+    return;
+  }
+
+  elements.overlay.classList.remove("visible");
+}
+
+function showOverlay({ persist = false } = {}) {
+  elements.overlay.classList.add("visible");
+  clearOverlayHideTimer();
+
+  if (persist || !state.hasUserSelectedChannel) {
+    return;
+  }
+
   state.guideHideTimer = window.setTimeout(() => {
-    elements.overlay.classList.remove("visible");
-  }, 2800);
+    hideOverlay();
+  }, OVERLAY_HIDE_DELAY_MS);
 }
 
 function formatDuration(totalSeconds) {
@@ -37,52 +85,431 @@ function formatDuration(totalSeconds) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function getCategory(categoryName) {
-  return state.guide.categories?.[categoryName] || null;
+function formatClock(timestampMs) {
+  return clockFormatter.format(new Date(timestampMs));
 }
 
-function updateNowPlaying(details) {
-  elements.currentCategory.textContent = details.category || "No category selected";
-  elements.currentTitle.textContent = details.title || "Choose a category to tune in.";
-  elements.currentMeta.textContent = details.meta;
+function formatMarkerLabel(timestampMs) {
+  return markerLabelFormatter.format(new Date(timestampMs));
 }
 
-function renderCategories() {
+function positiveModulo(value, divisor) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function getGuideEpochMs() {
+  return Date.parse(state.guide.epochStart || new Date().toISOString());
+}
+
+function getScheduleWindow(nowMs = Date.now()) {
+  const markerMs = MARKER_MINUTES * 60 * 1000;
+  const rawStart = nowMs - (WINDOW_BEFORE_MINUTES * 60 * 1000);
+  const startMs = Math.floor(rawStart / markerMs) * markerMs;
+  const endMs = startMs + ((WINDOW_BEFORE_MINUTES + WINDOW_AFTER_MINUTES) * 60 * 1000);
+
+  return { startMs, endMs };
+}
+
+function minutesToPixels(minutes) {
+  return minutes * PIXELS_PER_MINUTE;
+}
+
+function getRowByCategory(categoryName) {
+  return state.rows.find((row) => row.categoryName === categoryName) || null;
+}
+
+function getPlayableRows() {
+  return state.rows.filter((row) => row.videos.length > 0 && row.totalDurationSeconds);
+}
+
+function getPixelsFromWindowStart(timestampMs) {
+  return minutesToPixels((timestampMs - state.scheduleWindowStartMs) / 60000);
+}
+
+function buildRows() {
   const entries = Object.entries(state.guide.categories || {}).sort((left, right) =>
     left[0].localeCompare(right[0]),
   );
 
-  if (entries.length === 0) {
-    elements.categoriesList.innerHTML = '<p class="current-meta">No categories available yet. Add one from the admin dashboard.</p>';
+  state.rows = entries.map(([categoryName, category], index) => ({
+    categoryName,
+    channelNumber: CHANNEL_NUMBER_START + index,
+    videos: Array.isArray(category.videos) ? category.videos : [],
+    totalDurationSeconds: category.totalDurationSeconds || 0,
+  }));
+}
+
+function resolveLiveSlot(row, atMs = Date.now()) {
+  if (!row || !row.videos.length || !row.totalDurationSeconds) {
+    return null;
+  }
+
+  const epochMs = getGuideEpochMs();
+  const loopMs = row.totalDurationSeconds * 1000;
+  const liveOffsetMs = positiveModulo(atMs - epochMs, loopMs);
+  let runningOffsetMs = 0;
+
+  for (let index = 0; index < row.videos.length; index += 1) {
+    const video = row.videos[index];
+    const durationMs = (video.durationSeconds || 0) * 1000;
+    const videoEndMs = runningOffsetMs + durationMs;
+
+    if (liveOffsetMs < videoEndMs) {
+      const startOffsetMs = liveOffsetMs - runningOffsetMs;
+      return {
+        row,
+        video,
+        currentIndex: index,
+        startSeconds: Math.floor(startOffsetMs / 1000),
+        absoluteStartMs: atMs - startOffsetMs,
+        absoluteEndMs: atMs + (durationMs - startOffsetMs),
+      };
+    }
+
+    runningOffsetMs = videoEndMs;
+  }
+
+  const fallbackVideo = row.videos[0];
+  return {
+    row,
+    video: fallbackVideo,
+    currentIndex: 0,
+    startSeconds: 0,
+    absoluteStartMs: atMs,
+    absoluteEndMs: atMs + ((fallbackVideo.durationSeconds || 0) * 1000),
+  };
+}
+
+function buildSegmentsForRow(row, nowMs) {
+  if (!row.videos.length || !row.totalDurationSeconds) {
+    return [];
+  }
+
+  const epochMs = getGuideEpochMs();
+  const loopMs = row.totalDurationSeconds * 1000;
+  const firstLoopStartMs = epochMs + (Math.floor((state.scheduleWindowStartMs - epochMs) / loopMs) * loopMs);
+  const segments = [];
+
+  for (let loopStartMs = firstLoopStartMs - loopMs; loopStartMs < state.scheduleWindowEndMs; loopStartMs += loopMs) {
+    let runningOffsetMs = 0;
+
+    row.videos.forEach((video, index) => {
+      const durationMs = (video.durationSeconds || 0) * 1000;
+      const segmentStartMs = loopStartMs + runningOffsetMs;
+      const segmentEndMs = segmentStartMs + durationMs;
+      runningOffsetMs += durationMs;
+
+      if (segmentEndMs <= state.scheduleWindowStartMs || segmentStartMs >= state.scheduleWindowEndMs) {
+        return;
+      }
+
+      const visibleStartMs = Math.max(segmentStartMs, state.scheduleWindowStartMs);
+      const visibleEndMs = Math.min(segmentEndMs, state.scheduleWindowEndMs);
+
+      segments.push({
+        index,
+        row,
+        video,
+        absoluteStartMs: segmentStartMs,
+        absoluteEndMs: segmentEndMs,
+        leftPx: getPixelsFromWindowStart(visibleStartMs),
+        widthPx: getPixelsFromWindowStart(visibleEndMs) - getPixelsFromWindowStart(visibleStartMs),
+        isLive: nowMs >= segmentStartMs && nowMs < segmentEndMs,
+      });
+    });
+  }
+
+  return segments;
+}
+
+function updateCurrentChannelDisplay() {
+  const row = getRowByCategory(state.currentCategory);
+  const liveSlot = resolveLiveSlot(row);
+
+  if (!row || !liveSlot) {
+    elements.currentCategory.textContent = "No category selected";
+    elements.currentTitle.textContent = "Choose a category to tune in.";
+    elements.currentMeta.textContent = "Static Stream syncs each category to the same live timeline for every viewer.";
     return;
   }
 
-  elements.categoriesList.replaceChildren(
-    ...entries.map(([categoryName, category]) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "category-button";
+  const channelSuffix = liveSlot.video.channelTitle ? ` · ${liveSlot.video.channelTitle}` : "";
+  elements.currentCategory.textContent = row.categoryName;
+  elements.currentTitle.textContent = liveSlot.video.title;
+  elements.currentMeta.textContent = `${formatClock(liveSlot.absoluteStartMs)} - ${formatClock(liveSlot.absoluteEndMs)} · Channel ${row.channelNumber}${channelSuffix}`;
+}
 
-      if (categoryName === state.currentCategory) {
-        button.classList.add("active");
-      }
+function renderTimebar() {
+  elements.timebarTrack.replaceChildren();
+  elements.timebarTrack.style.width = `${state.scheduleWidthPx}px`;
 
-      const videoCount = category.videos?.length || 0;
-      button.disabled = videoCount === 0;
-      button.innerHTML = `
-        <strong>${categoryName}</strong>
-        <span>${videoCount} playable video${videoCount === 1 ? "" : "s"}</span>
-      `;
+  const markerMs = MARKER_MINUTES * 60 * 1000;
 
-      if (!button.disabled) {
-        button.addEventListener("click", () => {
-          tuneIntoCategory(categoryName);
-        });
-      }
+  for (let timestampMs = state.scheduleWindowStartMs; timestampMs < state.scheduleWindowEndMs; timestampMs += markerMs) {
+    const marker = document.createElement("div");
+    const strong = document.createElement("strong");
+    const secondary = document.createElement("span");
 
-      return button;
-    }),
-  );
+    marker.className = "time-marker";
+    marker.style.width = `${minutesToPixels(MARKER_MINUTES)}px`;
+    strong.textContent = formatClock(timestampMs);
+    secondary.textContent = formatMarkerLabel(timestampMs);
+
+    marker.append(strong, secondary);
+    elements.timebarTrack.append(marker);
+  }
+}
+
+function createEmptyRow(row) {
+  const rowElement = document.createElement("div");
+  const label = document.createElement("button");
+  const scroller = document.createElement("div");
+  const track = document.createElement("div");
+  const emptyBlock = document.createElement("div");
+  const number = document.createElement("span");
+  const name = document.createElement("strong");
+  const count = document.createElement("span");
+
+  rowElement.className = "epg-row";
+  rowElement.dataset.category = row.categoryName;
+
+  label.type = "button";
+  label.className = "channel-label";
+  label.dataset.category = row.categoryName;
+  number.className = "channel-number";
+  name.className = "channel-name";
+  count.className = "channel-count";
+  number.textContent = `CH ${row.channelNumber}`;
+  name.textContent = row.categoryName;
+  count.textContent = "0 playable videos";
+
+  label.append(number, name, count);
+
+  scroller.className = "timeline-scroller";
+  track.className = "timeline-track";
+  track.style.width = `${state.scheduleWidthPx}px`;
+
+  emptyBlock.className = "program-block empty";
+  emptyBlock.style.left = "12px";
+  emptyBlock.style.width = `${Math.max(state.scheduleWidthPx - 24, 120)}px`;
+  emptyBlock.textContent = "No playable videos in this category yet.";
+  track.append(emptyBlock);
+  scroller.append(track);
+  rowElement.append(label, scroller);
+
+  return rowElement;
+}
+
+function createRowElement(row, nowMs) {
+  if (!row.videos.length || !row.totalDurationSeconds) {
+    return createEmptyRow(row);
+  }
+
+  const rowElement = document.createElement("div");
+  const label = document.createElement("button");
+  const scroller = document.createElement("div");
+  const track = document.createElement("div");
+  const number = document.createElement("span");
+  const name = document.createElement("strong");
+  const count = document.createElement("span");
+  const segments = buildSegmentsForRow(row, nowMs);
+
+  rowElement.className = "epg-row";
+  rowElement.dataset.category = row.categoryName;
+
+  label.type = "button";
+  label.className = "channel-label";
+  label.dataset.category = row.categoryName;
+  number.className = "channel-number";
+  name.className = "channel-name";
+  count.className = "channel-count";
+  number.textContent = `CH ${row.channelNumber}`;
+  name.textContent = row.categoryName;
+  count.textContent = `${row.videos.length} playable video${row.videos.length === 1 ? "" : "s"}`;
+  label.append(number, name, count);
+
+  scroller.className = "timeline-scroller";
+  track.className = "timeline-track";
+  track.style.width = `${state.scheduleWidthPx}px`;
+
+  segments.forEach((segment) => {
+    const block = document.createElement("button");
+    const title = document.createElement("span");
+    const meta = document.createElement("span");
+
+    block.type = "button";
+    block.className = "program-block";
+    block.dataset.category = row.categoryName;
+    block.dataset.videoId = segment.video.videoId;
+    block.dataset.live = String(segment.isLive);
+    block.dataset.absoluteStart = String(segment.absoluteStartMs);
+    block.dataset.absoluteEnd = String(segment.absoluteEndMs);
+    block.style.left = `${segment.leftPx}px`;
+    block.style.width = `${segment.widthPx}px`;
+    block.setAttribute(
+      "aria-label",
+      `${row.categoryName}, ${segment.video.title}, ${formatClock(segment.absoluteStartMs)} to ${formatClock(segment.absoluteEndMs)}`,
+    );
+
+    if (segment.isLive) {
+      block.classList.add("live");
+    }
+
+    title.className = "program-title";
+    meta.className = "program-meta";
+    title.textContent = segment.video.title;
+    meta.textContent = `${formatClock(segment.absoluteStartMs)} - ${formatClock(segment.absoluteEndMs)} · ${formatDuration(segment.video.durationSeconds || 0)}`;
+
+    block.append(title, meta);
+    track.append(block);
+  });
+
+  scroller.append(track);
+  rowElement.append(label, scroller);
+
+  return rowElement;
+}
+
+function refreshSelectionStyles() {
+  const rows = elements.guideGrid.querySelectorAll(".epg-row");
+  const blocks = elements.guideGrid.querySelectorAll(".program-block");
+
+  rows.forEach((row) => {
+    row.classList.toggle("selected", row.dataset.category === state.currentCategory);
+  });
+
+  blocks.forEach((block) => {
+    const isSelectedRow = block.dataset.category === state.currentCategory;
+    const isLiveBlock = block.dataset.live === "true";
+    block.classList.toggle("selected", isSelectedRow && isLiveBlock);
+  });
+}
+
+function renderGrid(nowMs = Date.now()) {
+  elements.guideGrid.replaceChildren();
+
+  if (state.rows.length === 0) {
+    const emptyState = document.createElement("p");
+    emptyState.className = "empty-state";
+    emptyState.textContent = "No categories available yet. Add one from the admin dashboard.";
+    elements.guideGrid.append(emptyState);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  state.rows.forEach((row) => {
+    fragment.append(createRowElement(row, nowMs));
+  });
+  elements.guideGrid.append(fragment);
+  refreshSelectionStyles();
+}
+
+function syncTimebarScroll() {
+  elements.timebarScroll.scrollLeft = elements.guideGrid.scrollLeft;
+}
+
+function updatePlayheadPosition() {
+  if (!state.scheduleWidthPx) {
+    elements.playhead.classList.remove("visible");
+    return;
+  }
+
+  const timelineOffsetPx = getPixelsFromWindowStart(Date.now()) - elements.guideGrid.scrollLeft;
+  const labelWidth = document.querySelector(".timebar-label")?.offsetWidth || 0;
+  const visibleLeft = labelWidth;
+  const visibleRight = elements.guideGrid.clientWidth;
+  const playheadLeft = labelWidth + timelineOffsetPx;
+
+  if (playheadLeft < visibleLeft || playheadLeft > visibleRight) {
+    elements.playhead.classList.remove("visible");
+    return;
+  }
+
+  elements.playhead.style.left = `${playheadLeft}px`;
+  elements.playhead.classList.add("visible");
+}
+
+function centerScheduleOnNow() {
+  if (!state.scheduleWidthPx) {
+    return;
+  }
+
+  const labelWidth = document.querySelector(".timebar-label")?.offsetWidth || 0;
+  const viewportTimelineWidth = Math.max(elements.guideGrid.clientWidth - labelWidth, 0);
+  const currentTimePx = getPixelsFromWindowStart(Date.now());
+  const desiredOffsetPx = viewportTimelineWidth * 0.18;
+  const maxScrollLeft = Math.max((labelWidth + state.scheduleWidthPx) - elements.guideGrid.clientWidth, 0);
+  const targetScrollLeft = Math.min(Math.max(currentTimePx - desiredOffsetPx, 0), maxScrollLeft);
+
+  elements.guideGrid.scrollLeft = targetScrollLeft;
+  syncTimebarScroll();
+  updatePlayheadPosition();
+  state.hasCenteredOnNow = true;
+}
+
+function renderSchedule({ centerOnNow = false } = {}) {
+  const nowMs = Date.now();
+  const previousScrollTop = elements.guideGrid.scrollTop;
+  const previousScrollLeft = elements.guideGrid.scrollLeft;
+  const { startMs, endMs } = getScheduleWindow(nowMs);
+
+  state.scheduleWindowStartMs = startMs;
+  state.scheduleWindowEndMs = endMs;
+  state.scheduleWidthPx = getPixelsFromWindowStart(endMs);
+
+  renderTimebar();
+  renderGrid(nowMs);
+  elements.guideGrid.scrollTop = previousScrollTop;
+
+  if (centerOnNow) {
+    centerScheduleOnNow();
+  } else {
+    elements.guideGrid.scrollLeft = previousScrollLeft;
+  }
+
+  syncTimebarScroll();
+  updatePlayheadPosition();
+}
+
+function shouldRebuildSchedule(nowMs = Date.now()) {
+  const bufferMs = SCHEDULE_REBUILD_BUFFER_MINUTES * 60 * 1000;
+  return nowMs <= state.scheduleWindowStartMs + bufferMs || nowMs >= state.scheduleWindowEndMs - bufferMs;
+}
+
+function refreshLiveBlockState() {
+  const blocks = elements.guideGrid.querySelectorAll(".program-block:not(.empty)");
+  const nowMs = Date.now();
+
+  blocks.forEach((block) => {
+    const startMs = Number(block.dataset.absoluteStart);
+    const endMs = Number(block.dataset.absoluteEnd);
+    const isLive = nowMs >= startMs && nowMs < endMs;
+
+    block.dataset.live = String(isLive);
+    block.classList.toggle("live", isLive);
+  });
+
+  refreshSelectionStyles();
+}
+
+function tickLiveState() {
+  if (!state.rows.length) {
+    return;
+  }
+
+  if (shouldRebuildSchedule()) {
+    renderSchedule({ centerOnNow: true });
+  } else {
+    refreshLiveBlockState();
+    updatePlayheadPosition();
+  }
+
+  updateCurrentChannelDisplay();
+}
+
+function startLiveUpdates() {
+  window.clearInterval(state.liveTimer);
+  state.liveTimer = window.setInterval(tickLiveState, LIVE_TICK_MS);
 }
 
 function loadYouTubeApi() {
@@ -144,47 +571,56 @@ async function loadGuide() {
   }
 
   state.guide = payload;
-  renderCategories();
+  buildRows();
 
-  const categoryCount = Object.keys(state.guide.categories || {}).length;
-  elements.subtitle.textContent = categoryCount
-    ? "Move your mouse to reveal the guide and jump between custom channels."
+  elements.subtitle.textContent = state.rows.length
+    ? "Click any listing below to tune the player to that channel's live feed."
     : "No guide data exists yet. Add channels from the admin dashboard first.";
 }
 
 function findVideoInCurrentCategory(videoId) {
-  const category = getCategory(state.currentCategory);
+  const row = getRowByCategory(state.currentCategory);
 
-  if (!category || !Array.isArray(category.videos)) {
-    return { category, index: -1 };
+  if (!row || !Array.isArray(row.videos)) {
+    return { row, index: -1 };
   }
 
-  const index = category.videos.findIndex((video) => video.videoId === videoId);
-  return { category, index };
+  const index = row.videos.findIndex((video) => video.videoId === videoId);
+  return { row, index };
 }
 
 async function playNextVideo() {
-  const { category, index } = findVideoInCurrentCategory(state.currentVideoId);
+  const { row, index } = findVideoInCurrentCategory(state.currentVideoId);
 
-  if (!category || !category.videos?.length) {
+  if (!row || !row.videos.length || !state.player) {
     return;
   }
 
-  const nextIndex = index >= 0 ? (index + 1) % category.videos.length : 0;
-  const nextVideo = category.videos[nextIndex];
+  const nextIndex = index >= 0 ? (index + 1) % row.videos.length : 0;
+  const nextVideo = row.videos[nextIndex];
 
   state.currentVideoId = nextVideo.videoId;
-  updateNowPlaying({
-    category: state.currentCategory,
-    title: nextVideo.title,
-    meta: `Playing next in the loop · ${formatDuration(nextVideo.durationSeconds)} runtime`,
-  });
-  setStatus("Advancing to the next scheduled video.");
+  updateCurrentChannelDisplay();
+  setStatus(`Advancing to the next scheduled program on ${row.categoryName}.`);
   state.player.loadVideoById({ videoId: nextVideo.videoId, startSeconds: 0 });
 }
 
-async function tuneIntoCategory(categoryName) {
-  showOverlay();
+async function tuneIntoCategory(categoryName, { userInitiated = false } = {}) {
+  const row = getRowByCategory(categoryName);
+
+  if (!row || !row.videos.length) {
+    setStatus(`No playable videos are available on ${categoryName}.`);
+    return;
+  }
+
+  if (userInitiated) {
+    state.hasUserSelectedChannel = true;
+  }
+
+  state.currentCategory = categoryName;
+  updateCurrentChannelDisplay();
+  refreshSelectionStyles();
+  showOverlay({ persist: !state.hasUserSelectedChannel });
   setStatus(`Tuning into ${categoryName}...`);
 
   try {
@@ -197,59 +633,126 @@ async function tuneIntoCategory(categoryName) {
       throw new Error(payload.error || `Unable to tune into ${categoryName}.`);
     }
 
-    state.currentCategory = categoryName;
     state.currentVideoId = payload.videoId;
-    renderCategories();
-
-    updateNowPlaying({
-      category: categoryName,
-      title: payload.title,
-      meta: `Joined ${formatDuration(payload.startSeconds)} into the live broadcast · ${payload.playlistDurationSeconds} seconds in the full loop`,
-    });
+    updateCurrentChannelDisplay();
     setStatus(`Now playing ${payload.title}.`);
 
     state.player.loadVideoById({
       videoId: payload.videoId,
       startSeconds: payload.startSeconds,
     });
+
+    if (state.hasUserSelectedChannel) {
+      showOverlay();
+    } else {
+      showOverlay({ persist: true });
+    }
   } catch (error) {
+    showOverlay({ persist: true });
     setStatus(error.message);
   }
 }
 
+function changeChannel(step) {
+  const playableRows = getPlayableRows();
+
+  if (!playableRows.length) {
+    return;
+  }
+
+  const currentIndex = playableRows.findIndex((row) => row.categoryName === state.currentCategory);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (safeIndex + step + playableRows.length) % playableRows.length;
+  const nextRow = playableRows[nextIndex];
+
+  if (!nextRow) {
+    return;
+  }
+
+  tuneIntoCategory(nextRow.categoryName, { userInitiated: true });
+}
+
+function handleGuideClick(event) {
+  const label = event.target.closest(".channel-label");
+
+  if (label?.dataset.category) {
+    tuneIntoCategory(label.dataset.category, { userInitiated: true });
+    return;
+  }
+
+  const block = event.target.closest(".program-block:not(.empty)");
+
+  if (!block) {
+    return;
+  }
+
+  tuneIntoCategory(block.dataset.category, { userInitiated: true });
+}
+
 function initializeInteractions() {
-  elements.hoverSurface.addEventListener("mousemove", showOverlay);
-  elements.overlay.addEventListener("mousemove", showOverlay);
-  window.addEventListener("keydown", showOverlay);
+  elements.hoverSurface.addEventListener("mousemove", () => {
+    showOverlay();
+  });
+  elements.overlay.addEventListener("mousemove", () => {
+    showOverlay();
+  });
+  elements.overlay.addEventListener("click", () => {
+    showOverlay();
+  });
+  elements.guideGrid.addEventListener("click", handleGuideClick);
+  elements.guideGrid.addEventListener("scroll", () => {
+    showOverlay();
+    syncTimebarScroll();
+    updatePlayheadPosition();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      showOverlay();
+      changeChannel(-1);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      showOverlay();
+      changeChannel(1);
+      return;
+    }
+
+    showOverlay();
+  });
+  window.addEventListener("resize", () => {
+    if (state.rows.length) {
+      renderSchedule();
+    }
+  });
 }
 
 async function initializeTv() {
   initializeInteractions();
-  showOverlay();
+  showOverlay({ persist: true });
   setStatus("Loading TV guide...");
 
   try {
     await loadGuide();
-    const availableCategory = Object.entries(state.guide.categories || {}).find(
-      ([, category]) => (category.videos?.length || 0) > 0,
-    );
+    renderSchedule({ centerOnNow: true });
+    startLiveUpdates();
+
+    const availableCategory = state.rows.find((row) => row.videos.length > 0);
 
     if (availableCategory) {
-      await tuneIntoCategory(availableCategory[0]);
+      await tuneIntoCategory(availableCategory.categoryName);
     } else {
-      updateNowPlaying({
-        category: "Guide empty",
-        title: "No playable videos available",
-        meta: "Add a valid YouTube API key and at least one working channel ID in the admin dashboard.",
-      });
+      elements.currentCategory.textContent = "Guide empty";
+      elements.currentTitle.textContent = "No playable videos available";
+      elements.currentMeta.textContent = "Add a valid YouTube API key and at least one working channel ID in the admin dashboard.";
       setStatus("No playable categories were found in the local guide.");
     }
   } catch (error) {
-    updateNowPlaying({
-      category: "Connection issue",
-      title: "Unable to load Static Stream",
-      meta: "The local server may still be starting up, or the guide request failed.",
-    });
+    elements.currentCategory.textContent = "Connection issue";
+    elements.currentTitle.textContent = "Unable to load Static Stream";
+    elements.currentMeta.textContent = "The local server may still be starting up, or the guide request failed.";
     setStatus(error.message);
   }
 }
