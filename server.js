@@ -14,6 +14,7 @@ const RECENT_UPLOADS_PER_CHANNEL = 30;
 const DAILY_ROTATION_RECENT_COUNT = 2;
 const DAILY_ROTATION_RANDOM_COUNT = 3;
 const MIN_VIDEO_DURATION_SECONDS = 3 * 60;
+const MAX_VIDEO_DURATION_SECONDS = 3 * 60 * 60;
 
 const ROOT_DIR = __dirname;
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
@@ -421,7 +422,7 @@ async function getVideoDetails(videoIds, apiKey) {
     .map((item) => {
       const durationSeconds = parseIso8601Duration(item.contentDetails?.duration);
 
-      if (!durationSeconds || durationSeconds <= MIN_VIDEO_DURATION_SECONDS) {
+      if (!durationSeconds || durationSeconds <= MIN_VIDEO_DURATION_SECONDS || durationSeconds >= MAX_VIDEO_DURATION_SECONDS) {
         return null;
       }
 
