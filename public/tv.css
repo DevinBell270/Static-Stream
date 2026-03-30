@@ -218,7 +218,6 @@ a {
   display: flex;
   align-items: stretch;
   width: max-content;
-  min-width: var(--timeline-min-width);
   height: 100%;
 }
 
@@ -328,7 +327,6 @@ a {
 .timeline-track {
   position: relative;
   width: max-content;
-  min-width: var(--timeline-min-width);
   min-height: 100%;
   background-image: linear-gradient(90deg, rgba(163, 184, 214, 0.08) 1px, transparent 1px);
   background-size: 300px 100%;
