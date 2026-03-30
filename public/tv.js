@@ -1,6 +1,6 @@
-const PIXELS_PER_MINUTE = 10;
+let PIXELS_PER_MINUTE = 10;
 const MARKER_MINUTES = 30;
-const WINDOW_BEFORE_MINUTES = 180;
+const WINDOW_BEFORE_MINUTES = 0;
 const WINDOW_AFTER_MINUTES = 540;
 const CHANNEL_NUMBER_START = 101;
 const LIVE_TICK_MS = 1000;
@@ -437,7 +437,7 @@ function centerScheduleOnNow() {
   const labelWidth = document.querySelector(".timebar-label")?.offsetWidth || 0;
   const viewportTimelineWidth = Math.max(elements.guideGrid.clientWidth - labelWidth, 0);
   const currentTimePx = getPixelsFromWindowStart(Date.now());
-  const desiredOffsetPx = viewportTimelineWidth * 0.18;
+  const desiredOffsetPx = 0;
   const maxScrollLeft = Math.max((labelWidth + state.scheduleWidthPx) - elements.guideGrid.clientWidth, 0);
   const targetScrollLeft = Math.min(Math.max(currentTimePx - desiredOffsetPx, 0), maxScrollLeft);
 
@@ -451,6 +451,11 @@ function renderSchedule({ centerOnNow = false } = {}) {
   const nowMs = Date.now();
   const previousScrollTop = elements.guideGrid.scrollTop;
   const previousScrollLeft = elements.guideGrid.scrollLeft;
+  
+  const labelWidth = document.querySelector(".timebar-label")?.offsetWidth || 220;
+  const viewportWidth = Math.max(elements.guideGrid.clientWidth - labelWidth, 300);
+  PIXELS_PER_MINUTE = Math.max(10, viewportWidth / 120);
+
   const { startMs, endMs } = getScheduleWindow(nowMs);
 
   state.scheduleWindowStartMs = startMs;
@@ -699,6 +704,7 @@ function initializeInteractions() {
   elements.overlay.addEventListener("click", () => {
     showOverlay();
   });
+
   elements.guideGrid.addEventListener("click", handleGuideClick);
   elements.guideGrid.addEventListener("scroll", () => {
     showOverlay();
@@ -706,17 +712,31 @@ function initializeInteractions() {
     updatePlayheadPosition();
   });
   window.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowLeft") {
+    if (event.key === "ArrowUp") {
       event.preventDefault();
       showOverlay();
       changeChannel(-1);
       return;
     }
 
-    if (event.key === "ArrowRight") {
+    if (event.key === "ArrowDown") {
       event.preventDefault();
       showOverlay();
       changeChannel(1);
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      showOverlay();
+      elements.guideGrid.scrollBy({ left: -elements.guideGrid.clientWidth * 0.75, behavior: "smooth" });
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      showOverlay();
+      elements.guideGrid.scrollBy({ left: elements.guideGrid.clientWidth * 0.75, behavior: "smooth" });
       return;
     }
 
