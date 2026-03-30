@@ -620,6 +620,21 @@ async function tuneIntoCategory(categoryName, { userInitiated = false } = {}) {
 
   if (userInitiated) {
     state.hasUserSelectedChannel = true;
+
+    const selectedRow = Array.from(elements.guideGrid.querySelectorAll(".epg-row")).find(
+      (element) => element.dataset.category === categoryName
+    );
+
+    if (selectedRow) {
+      const rowRect = selectedRow.getBoundingClientRect();
+      const gridRect = elements.guideGrid.getBoundingClientRect();
+
+      if (rowRect.top < gridRect.top) {
+        elements.guideGrid.scrollBy({ top: rowRect.top - gridRect.top, behavior: "smooth" });
+      } else if (rowRect.bottom > gridRect.bottom) {
+        elements.guideGrid.scrollBy({ top: rowRect.bottom - gridRect.bottom, behavior: "smooth" });
+      }
+    }
   }
 
   state.currentCategory = categoryName;
