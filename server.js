@@ -83,7 +83,7 @@ function createStatusError(message, statusCode) {
 }
 
 function normalizeHandle(value, categoryName) {
-  const trimmedHandle = String(value || "").trim();
+  const trimmedHandle = striptags(String(value || "")).trim();
 
   if (!trimmedHandle) {
     return null;
@@ -100,7 +100,7 @@ function normalizeHandle(value, categoryName) {
 }
 
 function normalizeChannelId(value) {
-  const trimmedChannelId = String(value || "").trim();
+  const trimmedChannelId = striptags(String(value || "")).trim();
   return trimmedChannelId || null;
 }
 
@@ -228,7 +228,7 @@ function normalizeConfig(input) {
   const categories = {};
 
   for (const [categoryName, channelEntries] of Object.entries(input.categories)) {
-    const trimmedName = String(categoryName || "").trim();
+    const trimmedName = striptags(String(categoryName || "")).trim();
 
     if (!trimmedName) {
       continue;
