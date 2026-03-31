@@ -64,14 +64,7 @@ let refreshPromise = null;
 
 app.use(express.json({ limit: "1mb" }));
 
-app.use((request, response, next) => {
-  if (request.path === "/admin.html") {
-    return authLimiter(request, response, () => {
-      adminAuth(request, response, next);
-    });
-  }
-  next();
-});
+app.use("/admin.html", authLimiter, adminAuth);
 
 app.use(express.static(PUBLIC_DIR));
 
