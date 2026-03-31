@@ -4,6 +4,7 @@ const path = require("path");
 const dotenv = require("dotenv");
 const express = require("express");
 const basicAuth = require("express-basic-auth");
+const striptags = require("striptags");
 
 dotenv.config();
 
@@ -22,6 +23,12 @@ const adminAuth = basicAuth({
   users: { [ADMIN_USERNAME]: ADMIN_PASSWORD },
   challenge: true,
   unauthorizedResponse: "Unauthorized",
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: "Too many login attempts from this IP, please try again after 15 minutes",
 });
 
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
@@ -58,7 +65,9 @@ app.use(express.json({ limit: "1mb" }));
 
 app.use((request, response, next) => {
   if (request.path === "/admin.html") {
-    return adminAuth(request, response, next);
+    return authLimiter(request, response, () => {
+      adminAuth(request, response, next);
+    });
   }
   next();
 });
@@ -613,7 +622,7 @@ app.get("/api/config", async (request, response) => {
   }
 });
 
-app.post("/api/config", adminAuth, async (request, response) => {
+app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
   try {
     const nextConfig = await resolveConfigChannels(normalizeConfig(request.body));
     await writeJson(CONFIG_PATH, nextConfig);
