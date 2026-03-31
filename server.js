@@ -3,11 +3,35 @@ const path = require("path");
 
 const dotenv = require("dotenv");
 const express = require("express");
+const basicAuth = require("express-basic-auth");
+const striptags = require("striptags");
+const rateLimit = require("express-rate-limit");
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
+  console.error("FATAL ERROR: ADMIN_USERNAME and ADMIN_PASSWORD must be set in the environment.");
+  process.exit(1);
+}
+
+const adminAuth = basicAuth({
+  users: { [ADMIN_USERNAME]: ADMIN_PASSWORD },
+  challenge: true,
+  unauthorizedResponse: "Unauthorized",
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: "Too many login attempts from this IP, please try again after 15 minutes",
+});
+
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
 const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
 const RECENT_UPLOADS_PER_CHANNEL = 30;
@@ -39,6 +63,9 @@ const DEFAULT_DATABASE = {
 let refreshPromise = null;
 
 app.use(express.json({ limit: "1mb" }));
+
+app.use("/admin.html", authLimiter, adminAuth);
+
 app.use(express.static(PUBLIC_DIR));
 
 app.get("/", (request, response) => {
@@ -589,7 +616,7 @@ app.get("/api/config", async (request, response) => {
   }
 });
 
-app.post("/api/config", async (request, response) => {
+app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
   try {
     const nextConfig = await resolveConfigChannels(normalizeConfig(request.body));
     await writeJson(CONFIG_PATH, nextConfig);
