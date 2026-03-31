@@ -56,9 +56,11 @@ cp .env.example .env
 ```env
 YOUTUBE_API_KEY=your_real_api_key_here
 REFRESH_INTERVAL_HOURS=24
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your_secure_password
 ```
 
-`REFRESH_INTERVAL_HOURS` is optional. The default is `24`. You can set it to `12` if you want the cached guide to refresh more often.
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` are required to access the admin dashboard. The server will not start if they are missing. `REFRESH_INTERVAL_HOURS` is optional. The default is `24`. You can set it to `12` if you want the cached guide to refresh more often.
 
 You do not need to manually create `config.json` or `database.json`.
 
