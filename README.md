@@ -7,6 +7,7 @@ Static Stream is a self-hosted, algorithm-free television simulator. It takes ha
 - Uses `Node.js` and `Express` for the local backend
 - Uses local JSON files instead of a database
 - Lets you manage categories and YouTube handles from a browser-based admin dashboard
+- Sanitizes all user inputs (such as category names and handles) to prevent Cross-Site Scripting (XSS)
 - Fetches recent uploads from the YouTube Data API server-side only
 - Ignores videos that are 3 minutes or shorter to keep Shorts out of the lineup, and 3 hours or longer to avoid excessively long content
 - Builds a daily cable-style rotation with a mix of new uploads and reruns
