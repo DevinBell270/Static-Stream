@@ -5,6 +5,7 @@ const dotenv = require("dotenv");
 const express = require("express");
 const basicAuth = require("express-basic-auth");
 const striptags = require("striptags");
+const rateLimit = require("express-rate-limit");
 
 dotenv.config();
 
