@@ -1,6 +1,7 @@
 const state = {
   config: { categories: {} },
   guide: { categories: {} },
+  csrfToken: null,
   isSaving: false,
 };
 
@@ -337,6 +338,12 @@ function addChannelToConfig(categoryName, channelValue) {
 
 async function saveConfig() {
   clearStatus();
+
+  if (!state.csrfToken) {
+    setStatus("Cannot save: CSRF token is missing. Try reloading the page.", "error");
+    return;
+  }
+
   setSaving(true);
 
   try {
@@ -344,6 +351,7 @@ async function saveConfig() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-CSRF-Token": state.csrfToken,
       },
       body: JSON.stringify(state.config),
     });
@@ -370,14 +378,16 @@ async function loadDashboard() {
   clearStatus();
 
   try {
-    const [configResponse, guideResponse] = await Promise.all([
+    const [configResponse, guideResponse, csrfResponse] = await Promise.all([
       fetch("/api/config"),
       fetch("/api/guide"),
+      fetch("/api/csrf-token"),
     ]);
 
-    const [configPayload, guidePayload] = await Promise.all([
+    const [configPayload, guidePayload, csrfPayload] = await Promise.all([
       configResponse.json(),
       guideResponse.json(),
+      csrfResponse.json(),
     ]);
 
     if (!configResponse.ok) {
@@ -388,8 +398,13 @@ async function loadDashboard() {
       throw new Error(guidePayload.error || "Unable to load guide data.");
     }
 
+    if (!csrfResponse.ok || !csrfPayload.csrfToken) {
+      throw new Error("Unable to load security token. Reload the page to try again.");
+    }
+
     state.config = configPayload;
     state.guide = guidePayload;
+    state.csrfToken = csrfPayload.csrfToken;
     render();
 
     if (!Object.keys(state.config.categories).length) {
