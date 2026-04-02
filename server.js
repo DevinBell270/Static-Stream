@@ -786,7 +786,7 @@ app.get("/api/csrf-token", authLimiter, adminAuth, (request, response) => {
   response.json({ csrfToken: CSRF_TOKEN });
 });
 
-app.get("/api/config", async (request, response) => {
+app.get("/api/config", authLimiter, adminAuth, async (request, response) => {
   try {
     const config = await readConfig();
     response.json(config);
