@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 
@@ -31,6 +32,10 @@ const authLimiter = rateLimit({
   max: 100,
   message: "Too many login attempts from this IP, please try again after 15 minutes",
 });
+
+// CSRF — one opaque token per server process lifetime.
+// Rotates automatically on every restart.
+const CSRF_TOKEN = crypto.randomBytes(32).toString("hex");
 
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
 const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
@@ -607,6 +612,11 @@ function resolveLiveSlot(videos, liveOffsetSeconds) {
   };
 }
 
+// Expose the CSRF token only to authenticated admin sessions.
+app.get("/api/csrf-token", authLimiter, adminAuth, (request, response) => {
+  response.json({ csrfToken: CSRF_TOKEN });
+});
+
 app.get("/api/config", async (request, response) => {
   try {
     const config = await readConfig();
@@ -617,6 +627,14 @@ app.get("/api/config", async (request, response) => {
 });
 
 app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
+  // Validate CSRF token — must match the value issued by GET /api/csrf-token.
+  const incomingToken = request.headers["x-csrf-token"];
+
+  if (!incomingToken || !crypto.timingSafeEqual(Buffer.from(incomingToken), Buffer.from(CSRF_TOKEN))) {
+    response.status(403).json({ error: "Invalid or missing CSRF token." });
+    return;
+  }
+
   try {
     const nextConfig = await resolveConfigChannels(normalizeConfig(request.body));
     await writeJson(CONFIG_PATH, nextConfig);
