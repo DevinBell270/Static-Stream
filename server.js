@@ -541,11 +541,21 @@ async function resolveConfigChannels(config) {
         throw createStatusError("YOUTUBE_API_KEY is required to resolve YouTube handles.", 500);
       }
 
-      const channelId = await resolveChannelIdFromHandle(channelEntry.handle, apiKey);
-      categories[categoryName].push({
-        ...channelEntry,
-        channelId,
-      });
+      try {
+        const channelId = await resolveChannelIdFromHandle(channelEntry.handle, apiKey);
+        categories[categoryName].push({
+          ...channelEntry,
+          channelId,
+        });
+      } catch (error) {
+        // A dead or renamed handle must not abort the entire save. Log it and
+        // keep the entry as-is (without a resolved channelId) so the user can
+        // clean it up later without losing the rest of the config.
+        console.warn(
+          `[config] Could not resolve handle "${channelEntry.handle}" — skipping channel ID resolution. Error: ${error.message}`,
+        );
+        categories[categoryName].push({ ...channelEntry });
+      }
     }
   }
 
