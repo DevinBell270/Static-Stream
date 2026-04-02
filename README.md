@@ -1,6 +1,6 @@
 # Static Stream
 
-Static Stream is a self-hosted, algorithm-free television simulator. It takes hand-picked YouTube channels, groups them into custom categories, and turns them into a cable like experience.
+Static Stream is a self-hosted, algorithm-free television simulator. It takes hand-picked YouTube channels, groups them into custom categories, and turns them into a cable-like experience.
 
 ## What It Does
 
