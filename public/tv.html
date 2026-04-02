@@ -50,6 +50,15 @@
       </section>
     </main>
 
+    <aside id="stale-banner" class="stale-banner" role="alert" aria-live="assertive" hidden>
+      <span class="stale-banner-icon" aria-hidden="true">⚠️</span>
+      <div class="stale-banner-body">
+        <strong>API Unavailable — Yesterday's Content</strong>
+        <span id="stale-banner-detail">The scheduled refresh failed. Showing cached content from the last successful update.</span>
+      </div>
+      <button id="stale-banner-close" class="stale-banner-close" type="button" aria-label="Dismiss notice">✕</button>
+    </aside>
+
     <script src="https://www.youtube.com/iframe_api"></script>
     <script src="/tv.js" defer></script>
   </body>

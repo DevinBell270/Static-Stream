@@ -47,6 +47,9 @@ const elements = {
   timebarTrack: document.querySelector("#timebar-track"),
   guideGrid: document.querySelector("#guide-grid"),
   playhead: document.querySelector("#playhead"),
+  staleBanner: document.querySelector("#stale-banner"),
+  staleBannerDetail: document.querySelector("#stale-banner-detail"),
+  staleBannerClose: document.querySelector("#stale-banner-close"),
 };
 
 function setStatus(message) {
@@ -587,6 +590,54 @@ async function loadGuide() {
     : "No guide data exists yet. Add channels from the admin dashboard first.";
 }
 
+/**
+ * Fetches /api/status and, if the last refresh failed, shows the stale-cache
+ * warning banner. This runs fire-and-forget so it never blocks startup.
+ */
+async function checkAndShowStaleWarning() {
+  try {
+    const response = await fetch("/api/status");
+
+    if (!response.ok) {
+      return;
+    }
+
+    const status = await response.json();
+
+    if (!status.isStale) {
+      return;
+    }
+
+    const failedAt = status.failedAt
+      ? new Date(status.failedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+      : null;
+
+    const detail = [
+      "The YouTube API was unavailable during the last scheduled refresh.",
+      failedAt ? `Last failed: ${failedAt}.` : null,
+      "Showing cached content from the previous successful update.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    if (elements.staleBannerDetail) {
+      elements.staleBannerDetail.textContent = detail;
+    }
+
+    if (elements.staleBanner) {
+      elements.staleBanner.hidden = false;
+    }
+
+    if (elements.staleBannerClose) {
+      elements.staleBannerClose.addEventListener("click", () => {
+        elements.staleBanner.hidden = true;
+      }, { once: true });
+    }
+  } catch {
+    // Status check is best-effort; never surface this error to the user.
+  }
+}
+
 function findVideoInCurrentCategory(videoId) {
   const row = getRowByCategory(state.currentCategory);
 
@@ -841,6 +892,8 @@ async function initializeTv() {
 
   try {
     await loadGuide();
+    // Fire-and-forget: check if we're serving stale data and notify the user.
+    checkAndShowStaleWarning();
     renderSchedule({ centerOnNow: true });
     startLiveUpdates();
 
