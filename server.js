@@ -39,6 +39,7 @@ const authLimiter = rateLimit({
 const CSRF_TOKEN = crypto.randomBytes(32).toString("hex");
 
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
+const STARTUP_CACHE_MAX_AGE_HOURS = 6;
 const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
 const RECENT_UPLOADS_PER_CHANNEL = 30;
 const DAILY_ROTATION_RECENT_COUNT = 2;
@@ -756,6 +757,28 @@ function schedulePeriodicRefresh() {
   }, REFRESH_INTERVAL_MS);
 }
 
+/**
+ * Returns true when the on-disk database was written recently enough that
+ * fetching fresh data from the YouTube API on startup can be skipped.
+ * "Fresh" means the database exists and its updatedAt timestamp is no older
+ * than STARTUP_CACHE_MAX_AGE_HOURS.
+ */
+async function isDatabaseFresh() {
+  try {
+    const database = await readDatabase();
+
+    if (!database.updatedAt) {
+      return false;
+    }
+
+    const ageMs = Date.now() - new Date(database.updatedAt).getTime();
+    const maxAgeMs = STARTUP_CACHE_MAX_AGE_HOURS * 60 * 60 * 1000;
+    return ageMs < maxAgeMs;
+  } catch {
+    return false;
+  }
+}
+
 function resolveLiveSlot(videos, liveOffsetSeconds) {
   let runningDuration = 0;
 
@@ -884,10 +907,18 @@ async function start() {
   await ensureDataFiles();
   schedulePeriodicRefresh();
 
-  try {
-    await refreshDatabase("startup");
-  } catch (error) {
-    console.error("Failed to refresh Static Stream database:", error.message);
+  const fresh = await isDatabaseFresh();
+
+  if (fresh) {
+    console.log(
+      `[startup] Database is less than ${STARTUP_CACHE_MAX_AGE_HOURS} hours old — skipping YouTube API refresh.`,
+    );
+  } else {
+    try {
+      await refreshDatabase("startup");
+    } catch (error) {
+      console.error("Failed to refresh Static Stream database:", error.message);
+    }
   }
 
   app.listen(PORT, () => {
