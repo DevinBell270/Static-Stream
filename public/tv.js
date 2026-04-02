@@ -21,10 +21,10 @@ const markerLabelFormatter = new Intl.DateTimeFormat([], {
 const state = {
   guide: { categories: {} },
   rows: [],
-  player: null,
   playerReady: null,
   youtubeReady: null,
   currentCategory: null,
+  focusedCategory: null,
   currentVideoId: null,
   liveTimer: null,
   guideHideTimer: null,
@@ -59,18 +59,21 @@ function clearOverlayHideTimer() {
 }
 
 function hideOverlay() {
-  if (!state.hasUserSelectedChannel) {
-    return;
-  }
-
   elements.overlay.classList.remove("visible");
 }
 
-function showOverlay({ persist = false } = {}) {
+function showOverlay({ persist = false, mode = "full" } = {}) {
   elements.overlay.classList.add("visible");
+  
+  if (mode === "info") {
+    elements.overlay.classList.add("info-only");
+  } else {
+    elements.overlay.classList.remove("info-only");
+  }
+
   clearOverlayHideTimer();
 
-  if (persist || !state.hasUserSelectedChannel) {
+  if (persist) {
     return;
   }
 
@@ -376,6 +379,7 @@ function refreshSelectionStyles() {
 
   rows.forEach((row) => {
     row.classList.toggle("selected", row.dataset.category === state.currentCategory);
+    row.classList.toggle("focused", row.dataset.category === state.focusedCategory);
   });
 
   blocks.forEach((block) => {
@@ -610,7 +614,7 @@ async function playNextVideo() {
   state.player.loadVideoById({ videoId: nextVideo.videoId, startSeconds: 0 });
 }
 
-async function tuneIntoCategory(categoryName, { userInitiated = false } = {}) {
+async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "full" } = {}) {
   const row = getRowByCategory(categoryName);
 
   if (!row || !row.videos.length) {
@@ -619,8 +623,6 @@ async function tuneIntoCategory(categoryName, { userInitiated = false } = {}) {
   }
 
   if (userInitiated) {
-    state.hasUserSelectedChannel = true;
-
     const selectedRow = Array.from(elements.guideGrid.querySelectorAll(".epg-row")).find(
       (element) => element.dataset.category === categoryName
     );
@@ -638,9 +640,10 @@ async function tuneIntoCategory(categoryName, { userInitiated = false } = {}) {
   }
 
   state.currentCategory = categoryName;
+  state.focusedCategory = categoryName;
   updateCurrentChannelDisplay();
   refreshSelectionStyles();
-  showOverlay({ persist: !state.hasUserSelectedChannel });
+  showOverlay({ mode });
   setStatus(`Tuning into ${categoryName}...`);
 
   try {
@@ -662,18 +665,14 @@ async function tuneIntoCategory(categoryName, { userInitiated = false } = {}) {
       startSeconds: payload.startSeconds,
     });
 
-    if (state.hasUserSelectedChannel) {
-      showOverlay();
-    } else {
-      showOverlay({ persist: true });
-    }
+    showOverlay({ mode });
   } catch (error) {
-    showOverlay({ persist: true });
+    showOverlay({ persist: true, mode });
     setStatus(error.message);
   }
 }
 
-function changeChannel(step) {
+function changeChannel(step, mode = "full") {
   const playableRows = getPlayableRows();
 
   if (!playableRows.length) {
@@ -689,7 +688,7 @@ function changeChannel(step) {
     return;
   }
 
-  tuneIntoCategory(nextRow.categoryName, { userInitiated: true });
+  tuneIntoCategory(nextRow.categoryName, { userInitiated: true, mode });
 }
 
 function handleGuideClick(event) {
@@ -709,53 +708,110 @@ function handleGuideClick(event) {
   tuneIntoCategory(block.dataset.category, { userInitiated: true });
 }
 
+function scrollToFocusedRow() {
+  const targetCategory = state.focusedCategory || state.currentCategory;
+  if (!targetCategory) return;
+
+  const rowElement = Array.from(elements.guideGrid.querySelectorAll(".epg-row")).find(
+    (el) => el.dataset.category === targetCategory
+  );
+
+  if (rowElement) {
+    const rowRect = rowElement.getBoundingClientRect();
+    const gridRect = elements.guideGrid.getBoundingClientRect();
+
+    if (rowRect.top < gridRect.top) {
+      elements.guideGrid.scrollBy({ top: rowRect.top - gridRect.top, behavior: "smooth" });
+    } else if (rowRect.bottom > gridRect.bottom) {
+      elements.guideGrid.scrollBy({ top: rowRect.bottom - gridRect.bottom, behavior: "smooth" });
+    }
+  }
+}
+
+function handleVerticalNav(step) {
+  const isFullMode = elements.overlay.classList.contains("visible") && !elements.overlay.classList.contains("info-only");
+  
+  if (!isFullMode) {
+    showOverlay({ mode: "full" });
+    state.focusedCategory = state.currentCategory;
+    refreshSelectionStyles();
+    window.setTimeout(scrollToFocusedRow, 10);
+    return;
+  }
+
+  showOverlay({ mode: "full" });
+
+  const playableRows = getPlayableRows();
+  if (!playableRows.length) return;
+
+  const currentFocus = state.focusedCategory || state.currentCategory;
+  const currentIndex = playableRows.findIndex((row) => row.categoryName === currentFocus);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  
+  let nextIndex = safeIndex + step;
+  if (nextIndex < 0) nextIndex = playableRows.length - 1;
+  if (nextIndex >= playableRows.length) nextIndex = 0;
+
+  state.focusedCategory = playableRows[nextIndex].categoryName;
+  refreshSelectionStyles();
+  scrollToFocusedRow();
+}
+
 function initializeInteractions() {
   elements.hoverSurface.addEventListener("mousemove", () => {
-    showOverlay();
+    showOverlay({ mode: "full" });
   });
   elements.overlay.addEventListener("mousemove", () => {
-    showOverlay();
+    showOverlay({ mode: "full" });
   });
   elements.overlay.addEventListener("click", () => {
-    showOverlay();
+    showOverlay({ mode: "full" });
   });
 
   elements.guideGrid.addEventListener("click", handleGuideClick);
   elements.guideGrid.addEventListener("scroll", () => {
-    showOverlay();
+    showOverlay({ mode: "full" });
     syncTimebarScroll();
     updatePlayheadPosition();
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      showOverlay();
-      changeChannel(-1);
+      handleVerticalNav(-1);
       return;
     }
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      showOverlay();
-      changeChannel(1);
+      handleVerticalNav(1);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      const isFullMode = elements.overlay.classList.contains("visible") && !elements.overlay.classList.contains("info-only");
+      if (isFullMode && state.focusedCategory && state.focusedCategory !== state.currentCategory) {
+        event.preventDefault();
+        tuneIntoCategory(state.focusedCategory, { userInitiated: true, mode: "full" });
+      } else if (isFullMode) {
+        event.preventDefault();
+        showOverlay({ mode: "info" });
+      }
       return;
     }
 
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      showOverlay();
-      elements.guideGrid.scrollBy({ left: -elements.guideGrid.clientWidth * 0.75, behavior: "smooth" });
+      changeChannel(-1, "info");
       return;
     }
 
     if (event.key === "ArrowRight") {
       event.preventDefault();
-      showOverlay();
-      elements.guideGrid.scrollBy({ left: elements.guideGrid.clientWidth * 0.75, behavior: "smooth" });
+      changeChannel(1, "info");
       return;
     }
 
-    showOverlay();
+    showOverlay({ mode: "full" });
   });
   window.addEventListener("resize", () => {
     if (state.rows.length) {
@@ -766,7 +822,7 @@ function initializeInteractions() {
 
 async function initializeTv() {
   initializeInteractions();
-  showOverlay({ persist: true });
+  showOverlay({ persist: true, mode: "info" });
   setStatus("Loading TV guide...");
 
   try {
@@ -777,7 +833,7 @@ async function initializeTv() {
     const availableCategory = state.rows.find((row) => row.videos.length > 0);
 
     if (availableCategory) {
-      await tuneIntoCategory(availableCategory.categoryName);
+      await tuneIntoCategory(availableCategory.categoryName, { mode: "info" });
     } else {
       elements.currentCategory.textContent = "Guide empty";
       elements.currentTitle.textContent = "No playable videos available";

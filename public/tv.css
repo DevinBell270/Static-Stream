@@ -70,12 +70,35 @@ a {
     linear-gradient(180deg, rgba(0, 0, 0, 0.84) 0%, rgba(0, 0, 0, 0.28) 28%, rgba(0, 0, 0, 0.12) 48%, rgba(0, 0, 0, 0.8) 100%);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 220ms ease;
+  transition: opacity 220ms ease, background 220ms ease;
 }
 
 .guide-overlay.visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+.guide-overlay.info-only {
+  background: transparent;
+  pointer-events: none;
+}
+
+.guide-overlay.info-only .metadata-panel {
+  pointer-events: auto;
+}
+
+.guide-overlay.info-only .guide-hero,
+.guide-overlay.info-only .epg-grid-shell {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.guide-hero,
+.epg-grid-shell {
+  transition: opacity 220ms ease, visibility 220ms ease;
+  opacity: 1;
+  visibility: visible;
 }
 
 .overlay-header {
@@ -290,6 +313,12 @@ a {
 
 .epg-row.selected .channel-label {
   background: rgba(30, 64, 175, 0.24);
+}
+
+.epg-row.focused .channel-label {
+  outline: 2px solid rgba(96, 165, 250, 0.85);
+  outline-offset: -2px;
+  background: rgba(30, 64, 175, 0.35);
 }
 
 .channel-label:hover {
