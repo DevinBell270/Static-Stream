@@ -238,12 +238,20 @@ async function ensureFile(filePath, fallbackValue) {
   try {
     await fs.access(filePath);
   } catch (error) {
-    await writeJson(filePath, fallbackValue);
+    await atomicWriteJson(filePath, fallbackValue);
   }
 }
 
-async function writeJson(filePath, data) {
-  await fs.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+/**
+ * Writes JSON to a temporary sibling file and then renames it into place.
+ * fs.rename() is an atomic OS-level operation (single syscall) on POSIX
+ * systems, so the target file is never left in a half-written state — even
+ * if a scheduled refresh races against a manual "Save" in the admin panel.
+ */
+async function atomicWriteJson(filePath, data) {
+  const tmpPath = `${filePath}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  await fs.rename(tmpPath, filePath);
 }
 
 async function readJson(filePath, fallbackValue) {
@@ -252,7 +260,7 @@ async function readJson(filePath, fallbackValue) {
     return JSON.parse(raw);
   } catch (error) {
     if (error.code === "ENOENT") {
-      await writeJson(filePath, fallbackValue);
+      await atomicWriteJson(filePath, fallbackValue);
       return fallbackValue;
     }
 
@@ -729,7 +737,7 @@ async function refreshDatabase(refreshSource) {
   refreshPromise = (async () => {
     try {
       const database = await buildDatabase(refreshSource);
-      await writeJson(DATABASE_PATH, database);
+      await atomicWriteJson(DATABASE_PATH, database);
 
       lastRefreshStatus.succeededAt = new Date().toISOString();
       lastRefreshStatus.failedAt = null;
@@ -840,7 +848,7 @@ app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
   try {
     validateConfigSchema(request.body);
     const nextConfig = await resolveConfigChannels(normalizeConfig(request.body));
-    await writeJson(CONFIG_PATH, nextConfig);
+    await atomicWriteJson(CONFIG_PATH, nextConfig);
     const database = await refreshDatabase("config_update");
 
     response.json({
