@@ -162,6 +162,11 @@ Use `/tv.html` for the fullscreen player experience.
 - Tuning into a category calls the local backend for the current live position
 - Playback starts at the calculated second inside the correct video
 - When a video ends, the player advances to the next item in the saved category loop
+- Keyboard controls:
+  - `Up`/`Down` Arrows: Navigate the channel guide
+  - `Left`/`Right` Arrows: Cycle through channels directly
+  - `Enter`: Tune into the selected channel or open the channel info box
+  - `Spacebar`: Toggle audio mute/unmute
 
 ## API Endpoints
 

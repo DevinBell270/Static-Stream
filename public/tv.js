@@ -811,6 +811,20 @@ function initializeInteractions() {
       return;
     }
 
+    if (event.key === " " || event.code === "Space") {
+      event.preventDefault();
+      if (state.player) {
+        if (state.player.isMuted()) {
+          state.player.unMute();
+          setStatus("Audio unmuted.");
+        } else {
+          state.player.mute();
+          setStatus("Audio muted.");
+        }
+      }
+      return;
+    }
+
     showOverlay({ mode: "full" });
   });
   window.addEventListener("resize", () => {
