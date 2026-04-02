@@ -4,6 +4,7 @@ const path = require("path");
 
 const dotenv = require("dotenv");
 const express = require("express");
+const helmet = require("helmet");
 const basicAuth = require("express-basic-auth");
 const striptags = require("striptags");
 const rateLimit = require("express-rate-limit");
@@ -66,6 +67,34 @@ const DEFAULT_DATABASE = {
 };
 
 let refreshPromise = null;
+
+// ── Security headers ────────────────────────────────────────────────────────
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        // Allow the YouTube iframe API script and same-origin scripts.
+        scriptSrc: ["'self'", "https://www.youtube.com", "https://s.ytimg.com"],
+        // Permit YouTube iframes (both standard and privacy-enhanced).
+        frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com"],
+        // All API fetches are same-origin; no extra connect origins needed.
+        connectSrc: ["'self'"],
+        // Styles are served locally.
+        styleSrc: ["'self'"],
+        // YouTube thumbnail images come from these CDNs.
+        imgSrc: ["'self'", "https://i.ytimg.com", "https://img.youtube.com", "data:"],
+        // No plugins, objects, or base-URI shenanigans.
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        // Upgrade HTTP sub-resources to HTTPS automatically.
+        upgradeInsecureRequests: [],
+      },
+    },
+    // Explicitly set a modern referrer policy.
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+  }),
+);
 
 app.use(express.json({ limit: "1mb" }));
 
