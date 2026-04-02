@@ -1,8 +1,10 @@
+const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 
 const dotenv = require("dotenv");
 const express = require("express");
+const helmet = require("helmet");
 const basicAuth = require("express-basic-auth");
 const striptags = require("striptags");
 const rateLimit = require("express-rate-limit");
@@ -31,6 +33,10 @@ const authLimiter = rateLimit({
   max: 100,
   message: "Too many login attempts from this IP, please try again after 15 minutes",
 });
+
+// CSRF — one opaque token per server process lifetime.
+// Rotates automatically on every restart.
+const CSRF_TOKEN = crypto.randomBytes(32).toString("hex");
 
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
 const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
@@ -72,6 +78,33 @@ const lastRefreshStatus = {
   error: null,
   isStale: false,
 };
+// ── Security headers ────────────────────────────────────────────────────────
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        // Allow the YouTube iframe API script and same-origin scripts.
+        scriptSrc: ["'self'", "https://www.youtube.com", "https://s.ytimg.com"],
+        // Permit YouTube iframes (both standard and privacy-enhanced).
+        frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com"],
+        // All API fetches are same-origin; no extra connect origins needed.
+        connectSrc: ["'self'"],
+        // Styles are served locally.
+        styleSrc: ["'self'"],
+        // YouTube thumbnail images come from these CDNs.
+        imgSrc: ["'self'", "https://i.ytimg.com", "https://img.youtube.com", "data:"],
+        // No plugins, objects, or base-URI shenanigans.
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        // Upgrade HTTP sub-resources to HTTPS automatically.
+        upgradeInsecureRequests: [],
+      },
+    },
+    // Explicitly set a modern referrer policy.
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+  }),
+);
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -229,6 +262,114 @@ async function readJson(filePath, fallbackValue) {
 async function ensureDataFiles() {
   await ensureFile(CONFIG_PATH, DEFAULT_CONFIG);
   await ensureFile(DATABASE_PATH, DEFAULT_DATABASE);
+}
+
+// Allowed keys on a channel entry object.
+const CHANNEL_ENTRY_ALLOWED_KEYS = new Set(["handle", "channelId"]);
+
+/**
+ * Strictly validates the structural shape of a /api/config payload.
+ *
+ * Rules enforced:
+ *  - Root must be a plain object.
+ *  - Root may only contain the key "categories".
+ *  - "categories" must be a plain object (not an array / null / primitive).
+ *  - Each category name must be a non-empty string key.
+ *  - Each category value must be an array.
+ *  - Each element of that array must be either:
+ *      • a non-empty string (bare handle / channel-id shorthand), or
+ *      • a plain object whose keys are a non-empty subset of {"handle", "channelId"}.
+ *
+ * Throws a status-tagged Error (400) on the first violation found.
+ */
+function validateConfigSchema(input) {
+  if (!isPlainObject(input)) {
+    throw createStatusError("Request body must be a JSON object.", 400);
+  }
+
+  const rootKeys = Object.keys(input);
+  const unexpectedRootKeys = rootKeys.filter((k) => k !== "categories");
+
+  if (unexpectedRootKeys.length > 0) {
+    throw createStatusError(
+      `Unexpected field(s) at root level: ${unexpectedRootKeys.map((k) => `"${k}"`).join(", ")}. Only "categories" is allowed.`,
+      400,
+    );
+  }
+
+  if (!("categories" in input)) {
+    throw createStatusError('Request body must contain a "categories" field.', 400);
+  }
+
+  if (!isPlainObject(input.categories)) {
+    throw createStatusError('"categories" must be a plain object mapping category names to arrays of channels.', 400);
+  }
+
+  for (const [categoryName, channelEntries] of Object.entries(input.categories)) {
+    if (typeof categoryName !== "string" || categoryName.trim() === "") {
+      throw createStatusError("Category names must be non-empty strings.", 400);
+    }
+
+    if (!Array.isArray(channelEntries)) {
+      throw createStatusError(
+        `Category "${categoryName}" must map to an array of channel entries, got ${typeof channelEntries}.`,
+        400,
+      );
+    }
+
+    channelEntries.forEach((entry, index) => {
+      // Shorthand string form — valid.
+      if (typeof entry === "string") {
+        if (entry.trim() === "") {
+          throw createStatusError(
+            `Category "${categoryName}" contains an empty string at index ${index}. Remove it or supply a valid handle / channel ID.`,
+            400,
+          );
+        }
+        return;
+      }
+
+      // Object form — validate shape.
+      if (!isPlainObject(entry)) {
+        throw createStatusError(
+          `Category "${categoryName}" index ${index}: each channel entry must be a string or an object, got ${Array.isArray(entry) ? "array" : typeof entry}.`,
+          400,
+        );
+      }
+
+      const entryKeys = Object.keys(entry);
+
+      if (entryKeys.length === 0) {
+        throw createStatusError(
+          `Category "${categoryName}" index ${index}: channel entry object must contain at least one of "handle" or "channelId".`,
+          400,
+        );
+      }
+
+      const illegalKeys = entryKeys.filter((k) => !CHANNEL_ENTRY_ALLOWED_KEYS.has(k));
+
+      if (illegalKeys.length > 0) {
+        throw createStatusError(
+          `Category "${categoryName}" index ${index}: unexpected key(s) ${illegalKeys.map((k) => `"${k}"`).join(", ")} on channel entry. Only "handle" and "channelId" are allowed.`,
+          400,
+        );
+      }
+
+      if (entry.handle !== undefined && typeof entry.handle !== "string") {
+        throw createStatusError(
+          `Category "${categoryName}" index ${index}: "handle" must be a string.`,
+          400,
+        );
+      }
+
+      if (entry.channelId !== undefined && typeof entry.channelId !== "string") {
+        throw createStatusError(
+          `Category "${categoryName}" index ${index}: "channelId" must be a string.`,
+          400,
+        );
+      }
+    });
+  }
 }
 
 function normalizeConfig(input) {
@@ -640,6 +781,11 @@ function resolveLiveSlot(videos, liveOffsetSeconds) {
   };
 }
 
+// Expose the CSRF token only to authenticated admin sessions.
+app.get("/api/csrf-token", authLimiter, adminAuth, (request, response) => {
+  response.json({ csrfToken: CSRF_TOKEN });
+});
+
 app.get("/api/config", async (request, response) => {
   try {
     const config = await readConfig();
@@ -650,7 +796,16 @@ app.get("/api/config", async (request, response) => {
 });
 
 app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
+  // Validate CSRF token — must match the value issued by GET /api/csrf-token.
+  const incomingToken = request.headers["x-csrf-token"];
+
+  if (!incomingToken || !crypto.timingSafeEqual(Buffer.from(incomingToken), Buffer.from(CSRF_TOKEN))) {
+    response.status(403).json({ error: "Invalid or missing CSRF token." });
+    return;
+  }
+
   try {
+    validateConfigSchema(request.body);
     const nextConfig = await resolveConfigChannels(normalizeConfig(request.body));
     await writeJson(CONFIG_PATH, nextConfig);
     const database = await refreshDatabase("config_update");
