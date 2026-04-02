@@ -68,6 +68,16 @@ const DEFAULT_DATABASE = {
 
 let refreshPromise = null;
 
+/**
+ * Tracks the outcome of the most recent database refresh attempt.
+ * Updated on every scheduled or manual refresh.
+ */
+const lastRefreshStatus = {
+  succeededAt: null,
+  failedAt: null,
+  error: null,
+  isStale: false,
+};
 // ── Security headers ────────────────────────────────────────────────────────
 app.use(
   helmet({
@@ -706,9 +716,31 @@ async function refreshDatabase(refreshSource) {
   }
 
   refreshPromise = (async () => {
-    const database = await buildDatabase(refreshSource);
-    await writeJson(DATABASE_PATH, database);
-    return database;
+    try {
+      const database = await buildDatabase(refreshSource);
+      await writeJson(DATABASE_PATH, database);
+
+      lastRefreshStatus.succeededAt = new Date().toISOString();
+      lastRefreshStatus.failedAt = null;
+      lastRefreshStatus.error = null;
+      lastRefreshStatus.isStale = false;
+
+      return database;
+    } catch (error) {
+      const failedAt = new Date().toISOString();
+
+      lastRefreshStatus.failedAt = failedAt;
+      lastRefreshStatus.error = error.message;
+      lastRefreshStatus.isStale = true;
+
+      console.error(
+        `[${failedAt}] Static Stream refresh failed (source: ${refreshSource}). Continuing to serve existing database. Error: ${error.message}`,
+      );
+
+      // Return the existing stale database so callers still get valid data.
+      // We deliberately do NOT overwrite database.json on failure.
+      return readDatabase();
+    }
   })().finally(() => {
     refreshPromise = null;
   });
@@ -796,6 +828,15 @@ app.get("/api/guide", async (request, response) => {
   } catch (error) {
     response.status(500).json({ error: error.message });
   }
+});
+
+app.get("/api/status", (request, response) => {
+  response.json({
+    isStale: lastRefreshStatus.isStale,
+    succeededAt: lastRefreshStatus.succeededAt,
+    failedAt: lastRefreshStatus.failedAt,
+    error: lastRefreshStatus.error,
+  });
 });
 
 app.get("/api/tune-in/:category", async (request, response) => {
