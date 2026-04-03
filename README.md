@@ -173,7 +173,7 @@ Use `/tv.html` for the fullscreen player experience.
 - `GET /api/config` returns the current config
 - `POST /api/config` overwrites the config, resolves new `@handle` entries, and refreshes cached guide data
 - `GET /api/guide` returns the compiled local guide
-- `GET /api/tune-in/:category` returns the current live video and start offset for a category
+- `GET /api/tune-in/:category` returns the current live video and start offset for a category, plus `nextVideo` (`videoId`, `title`, `durationSeconds`) — the following item in that category’s looped playlist for preloading or seamless advance
 
 ## Notes
 
