@@ -84,6 +84,14 @@ const lastRefreshStatus = {
   error: null,
   isStale: false,
 };
+
+function markLastRefreshSucceeded() {
+  lastRefreshStatus.succeededAt = new Date().toISOString();
+  lastRefreshStatus.failedAt = null;
+  lastRefreshStatus.error = null;
+  lastRefreshStatus.isStale = false;
+}
+
 // ── Security headers ────────────────────────────────────────────────────────
 app.use(
   helmet({
@@ -769,10 +777,7 @@ async function refreshDatabase(refreshSource) {
       const database = await buildDatabase(refreshSource);
       await atomicWriteJson(DATABASE_PATH, database);
 
-      lastRefreshStatus.succeededAt = new Date().toISOString();
-      lastRefreshStatus.failedAt = null;
-      lastRefreshStatus.error = null;
-      lastRefreshStatus.isStale = false;
+      markLastRefreshSucceeded();
 
       return database;
     } catch (error) {
@@ -1012,10 +1017,7 @@ app.post("/api/guide/refresh/:category", authLimiter, adminAuth, async (request,
 
     await atomicWriteJson(DATABASE_PATH, updatedDatabase);
 
-    lastRefreshStatus.succeededAt = new Date().toISOString();
-    lastRefreshStatus.failedAt = null;
-    lastRefreshStatus.error = null;
-    lastRefreshStatus.isStale = false;
+    markLastRefreshSucceeded();
 
     response.json({ category: categoryName, guide: updatedDatabase });
   } catch (error) {
@@ -1029,7 +1031,7 @@ app.get("/api/status", (request, response) => {
     isStale: lastRefreshStatus.isStale,
     succeededAt: lastRefreshStatus.succeededAt,
     failedAt: lastRefreshStatus.failedAt,
-    error: lastRefreshStatus.error,
+    error: lastRefreshStatus.error ? "Refresh failed. Check server logs." : null,
   });
 });
 
