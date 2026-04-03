@@ -6,6 +6,35 @@ const CHANNEL_NUMBER_START = 101;
 const LIVE_TICK_MS = 1000;
 const SCHEDULE_REBUILD_BUFFER_MINUTES = 60;
 const OVERLAY_HIDE_DELAY_MS = 2800;
+const STORAGE_KEY = "staticStreamCurrentCategory";
+
+function readSavedCategory() {
+  if (typeof localStorage === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw || !String(raw).trim()) {
+      return null;
+    }
+    return String(raw).trim();
+  } catch {
+    return null;
+  }
+}
+
+function persistCurrentCategory(categoryName) {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEY, categoryName);
+  } catch {
+    // Private mode, quota, or disabled storage — ignore.
+  }
+}
 
 const clockFormatter = new Intl.DateTimeFormat([], {
   hour: "numeric",
@@ -716,6 +745,7 @@ async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "f
       startSeconds: payload.startSeconds,
     });
 
+    persistCurrentCategory(categoryName);
     showOverlay({ mode });
   } catch (error) {
     showOverlay({ persist: true, mode });
@@ -898,9 +928,13 @@ async function initializeTv() {
     startLiveUpdates();
 
     const availableCategory = state.rows.find((row) => row.videos.length > 0);
+    const savedName = readSavedCategory();
+    const savedRow = savedName ? getRowByCategory(savedName) : null;
+    const categoryToTune =
+      savedRow && savedRow.videos.length > 0 ? savedRow : availableCategory;
 
-    if (availableCategory) {
-      await tuneIntoCategory(availableCategory.categoryName, { mode: "info" });
+    if (categoryToTune) {
+      await tuneIntoCategory(categoryToTune.categoryName, { mode: "info" });
     } else {
       elements.currentCategory.textContent = "Guide empty";
       elements.currentTitle.textContent = "No playable videos available";
