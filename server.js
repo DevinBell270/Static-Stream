@@ -8,8 +8,13 @@ const helmet = require("helmet");
 const basicAuth = require("express-basic-auth");
 const striptags = require("striptags");
 const rateLimit = require("express-rate-limit");
+const pLimit = require("p-limit");
 
 dotenv.config();
+
+/** Caps concurrent YouTube channel fetches per category (quota / burst control). */
+const CHANNEL_FETCH_CONCURRENCY = 3;
+const channelFetchLimit = pLimit(CHANNEL_FETCH_CONCURRENCY);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -534,40 +539,43 @@ async function resolveChannelIdFromHandle(handle, apiKey) {
 
 async function resolveConfigChannels(config) {
   const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
-  const categories = {};
-
-  for (const [categoryName, channelEntries] of Object.entries(config.categories)) {
-    categories[categoryName] = [];
-
-    for (const channelEntry of channelEntries) {
-      if (channelEntry.channelId || !channelEntry.handle) {
-        categories[categoryName].push(channelEntry);
-        continue;
-      }
-
-      if (!apiKey) {
-        throw createStatusError("YOUTUBE_API_KEY is required to resolve YouTube handles.", 500);
-      }
-
-      try {
-        const channelId = await resolveChannelIdFromHandle(channelEntry.handle, apiKey);
-        categories[categoryName].push({
-          ...channelEntry,
-          channelId,
-        });
-      } catch (error) {
-        // A dead or renamed handle must not abort the entire save. Log it and
-        // keep the entry as-is (without a resolved channelId) so the user can
-        // clean it up later without losing the rest of the config.
-        console.warn(
-          `[config] Could not resolve handle "${channelEntry.handle}" — skipping channel ID resolution. Error: ${error.message}`,
-        );
-        categories[categoryName].push({ ...channelEntry });
-      }
-    }
+  const needsHandleResolution = Object.values(config.categories).some((entries) =>
+    entries.some((e) => !e.channelId && e.handle),
+  );
+  if (needsHandleResolution && !apiKey) {
+    throw createStatusError("YOUTUBE_API_KEY is required to resolve YouTube handles.", 500);
   }
 
-  return normalizeConfig({ categories });
+  const categoryEntries = await Promise.all(
+    Object.entries(config.categories).map(async ([categoryName, channelEntries]) => {
+      const resolvedEntries = await Promise.all(
+        channelEntries.map(async (channelEntry) => {
+          if (channelEntry.channelId || !channelEntry.handle) {
+            return channelEntry;
+          }
+
+          try {
+            const channelId = await resolveChannelIdFromHandle(channelEntry.handle, apiKey);
+            return {
+              ...channelEntry,
+              channelId,
+            };
+          } catch (error) {
+            // A dead or renamed handle must not abort the entire save. Log it and
+            // keep the entry as-is (without a resolved channelId) so the user can
+            // clean it up later without losing the rest of the config.
+            console.warn(
+              `[config] Could not resolve handle "${channelEntry.handle}" — skipping channel ID resolution. Error: ${error.message}`,
+            );
+            return { ...channelEntry };
+          }
+        }),
+      );
+      return [categoryName, resolvedEntries];
+    }),
+  );
+
+  return normalizeConfig({ categories: Object.fromEntries(categoryEntries) });
 }
 
 async function getUploadsPlaylistId(channelId, apiKey) {
@@ -666,32 +674,59 @@ async function buildCategoryData(categoryName, channelEntries, apiKey) {
   const seenVideoIds = new Set();
   const categoryErrors = [];
 
-  for (const channelEntry of channelEntries) {
-    if (!channelEntry.channelId) {
+  const results = await Promise.all(
+    channelEntries.map((channelEntry, index) =>
+      channelFetchLimit(async () => {
+        if (!channelEntry.channelId) {
+          return {
+            index,
+            kind: "missingId",
+            channelEntry,
+          };
+        }
+
+        try {
+          const channelVideos = await fetchChannelVideos(
+            channelEntry.channelId,
+            apiKey,
+            RECENT_UPLOADS_PER_CHANNEL,
+          );
+          return { index, kind: "ok", channelVideos };
+        } catch (error) {
+          return {
+            index,
+            kind: "error",
+            message: `Channel ${channelEntry.handle || channelEntry.channelId}: ${error.message}`,
+          };
+        }
+      }),
+    ),
+  );
+
+  results.sort((a, b) => a.index - b.index);
+
+  for (const result of results) {
+    if (result.kind === "missingId") {
       categoryErrors.push(
-        `Channel ${channelEntry.handle || "unknown"} is missing a saved channel ID. Save the config again to resolve it.`,
+        `Channel ${result.channelEntry.handle || "unknown"} is missing a saved channel ID. Save the config again to resolve it.`,
       );
       continue;
     }
 
-    try {
-      const channelVideos = await fetchChannelVideos(
-        channelEntry.channelId,
-        apiKey,
-        RECENT_UPLOADS_PER_CHANNEL,
-      );
-      const dailyRotation = selectDailyRotation(channelVideos);
-
-      dailyRotation.forEach((video) => {
-        if (seenVideoIds.has(video.videoId)) {
-          return;
-        }
-        seenVideoIds.add(video.videoId);
-        collectedVideos.push(video);
-      });
-    } catch (error) {
-      categoryErrors.push(`Channel ${channelEntry.handle || channelEntry.channelId}: ${error.message}`);
+    if (result.kind === "error") {
+      categoryErrors.push(result.message);
+      continue;
     }
+
+    const dailyRotation = selectDailyRotation(result.channelVideos);
+
+    dailyRotation.forEach((video) => {
+      if (seenVideoIds.has(video.videoId)) {
+        return;
+      }
+      seenVideoIds.add(video.videoId);
+      collectedVideos.push(video);
+    });
   }
 
   const shuffledVideos = shuffleArray(collectedVideos);
@@ -708,12 +743,13 @@ async function buildDatabase(refreshSource = "manual") {
   const config = await readConfig();
   const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
   const epoch = getWeekEpoch();
-  const categories = {};
 
-  for (const [categoryName, channelEntries] of Object.entries(config.categories)) {
-    // eslint-disable-next-line no-await-in-loop
-    categories[categoryName] = await buildCategoryData(categoryName, channelEntries, apiKey);
-  }
+  const categoryResults = await Promise.all(
+    Object.entries(config.categories).map(([categoryName, channelEntries]) =>
+      buildCategoryData(categoryName, channelEntries, apiKey).then((data) => [categoryName, data]),
+    ),
+  );
+  const categories = Object.fromEntries(categoryResults);
 
   return {
     updatedAt: new Date().toISOString(),
