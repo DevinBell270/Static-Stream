@@ -11,6 +11,7 @@ const elements = {
   form: document.querySelector("#channel-form"),
   categoryName: document.querySelector("#category-name"),
   channelInput: document.querySelector("#channel-id"),
+  channelPreview: document.querySelector("#channel-preview"),
   addCategoryButton: document.querySelector("#add-category-button"),
   addChannelButton: document.querySelector("#add-channel-button"),
   saveButton: document.querySelector("#save-config-button"),
@@ -424,8 +425,135 @@ elements.categoryForm.addEventListener("submit", (event) => {
   addCategoryToConfig(elements.newCategoryName.value);
 });
 
+// ── Channel preview ──────────────────────────────────────────────────────────
+
+/** Clears the preview pane without animation. */
+function clearChannelPreview() {
+  elements.channelPreview.replaceChildren();
+}
+
+/** Renders a loading spinner while the API call is in flight. */
+function showPreviewLoading() {
+  const card = document.createElement("div");
+  card.className = "channel-preview-card loading";
+
+  const spinner = document.createElement("div");
+  spinner.className = "channel-preview-spinner";
+
+  const info = document.createElement("div");
+  info.className = "channel-preview-info";
+
+  const title = document.createElement("span");
+  title.className = "channel-preview-title";
+  title.textContent = "Looking up channel…";
+  info.append(title);
+
+  card.append(spinner, info);
+  elements.channelPreview.replaceChildren(card);
+}
+
+/** Renders the resolved channel card with avatar + name. */
+function showPreviewResult(data) {
+  const card = document.createElement("div");
+  card.className = "channel-preview-card";
+
+  if (data.thumbnail) {
+    const img = document.createElement("img");
+    img.src = data.thumbnail;
+    img.alt = data.title;
+    img.className = "channel-preview-avatar";
+    img.width = 40;
+    img.height = 40;
+    card.append(img);
+  } else {
+    const placeholder = document.createElement("div");
+    placeholder.className = "channel-preview-avatar-placeholder";
+    placeholder.textContent = "📺";
+    card.append(placeholder);
+  }
+
+  const info = document.createElement("div");
+  info.className = "channel-preview-info";
+
+  const title = document.createElement("span");
+  title.className = "channel-preview-title";
+  title.textContent = data.title;
+  info.append(title);
+
+  if (data.channelId) {
+    const id = document.createElement("span");
+    id.className = "channel-preview-id";
+    id.textContent = data.channelId;
+    info.append(id);
+  }
+
+  card.append(info);
+  elements.channelPreview.replaceChildren(card);
+}
+
+/** Renders an error chip below the input. */
+function showPreviewError(message) {
+  const card = document.createElement("div");
+  card.className = "channel-preview-card error";
+
+  const errorText = document.createElement("span");
+  errorText.className = "channel-preview-error";
+  errorText.textContent = message;
+  card.append(errorText);
+
+  elements.channelPreview.replaceChildren(card);
+}
+
+/**
+ * Debounced handler: fires a preview API call 600 ms after the user stops
+ * typing a string that looks like a YouTube handle.
+ */
+let previewTimer = null;
+
+function schedulePreview(rawValue) {
+  clearTimeout(previewTimer);
+  const handle = rawValue.trim();
+
+  if (!handle) {
+    clearChannelPreview();
+    return;
+  }
+
+  // Require the leading "@" before hitting the network.
+  if (!handle.startsWith("@") || handle.length < 2) {
+    clearChannelPreview();
+    return;
+  }
+
+  showPreviewLoading();
+
+  previewTimer = setTimeout(async () => {
+    try {
+      const response = await fetch(
+        `/api/channel-preview?handle=${encodeURIComponent(handle)}`,
+      );
+      const payload = await response.json();
+
+      if (!response.ok) {
+        showPreviewError(payload.error || "Channel not found.");
+        return;
+      }
+
+      showPreviewResult(payload);
+    } catch {
+      showPreviewError("Could not reach the server. Check your connection.");
+    }
+  }, 600);
+}
+
+elements.channelInput.addEventListener("input", (event) => {
+  schedulePreview(event.target.value);
+});
+
 elements.form.addEventListener("submit", (event) => {
   event.preventDefault();
+  clearTimeout(previewTimer);
+  clearChannelPreview();
   addChannelToConfig(elements.categoryName.value, elements.channelInput.value);
 });
 
