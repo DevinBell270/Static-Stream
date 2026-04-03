@@ -3,6 +3,7 @@ const state = {
   guide: { categories: {} },
   csrfToken: null,
   isSaving: false,
+  refreshingCategories: new Set(), // category names currently being refreshed
 };
 
 const elements = {
@@ -46,6 +47,12 @@ function setSaving(isSaving) {
   elements.addCategoryButton.disabled = isSaving;
   elements.addChannelButton.disabled = isSaving;
   elements.saveButton.textContent = isSaving ? "Refreshing YouTube Cache..." : "Save Changes";
+
+  // Disable all per-category refresh buttons while a global save is running.
+  document.querySelectorAll(".category-refresh-button").forEach((btn) => {
+    btn.disabled = isSaving || state.refreshingCategories.has(btn.dataset.category);
+  });
+
   syncChannelFormState();
 }
 
@@ -189,6 +196,20 @@ function buildCategoryDeleteButton(categoryName) {
   return button;
 }
 
+function buildCategoryRefreshButton(categoryName) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "category-refresh-button";
+  button.dataset.category = categoryName;
+  button.textContent = "↻ Refresh";
+  button.disabled = state.isSaving || state.refreshingCategories.has(categoryName);
+  button.addEventListener("click", () => {
+    refreshCategory(categoryName);
+  });
+
+  return button;
+}
+
 function renderStats() {
   const categories = getCategoryEntries();
   const totalChannels = categories.reduce((sum, [, channelEntries]) => sum + channelEntries.length, 0);
@@ -257,7 +278,14 @@ function renderCategories() {
           <p class="category-meta">${channelEntries.length} channel${channelEntries.length === 1 ? "" : "s"} · ${cachedVideoCount} cached video${cachedVideoCount === 1 ? "" : "s"}</p>
         </div>
       `;
-      header.append(buildCategoryDeleteButton(categoryName));
+
+      const headerActions = document.createElement("div");
+      headerActions.className = "category-card-actions";
+      headerActions.append(
+        buildCategoryRefreshButton(categoryName),
+        buildCategoryDeleteButton(categoryName),
+      );
+      header.append(headerActions);
 
       const list = document.createElement("div");
       list.className = "channel-list";
@@ -373,6 +401,62 @@ async function saveConfig() {
     setStatus(error.message, "error");
   } finally {
     setSaving(false);
+  }
+}
+
+/**
+ * Refreshes a single category's YouTube cache without touching any other
+ * category or the saved config. Uses the dedicated
+ * POST /api/guide/refresh/:category endpoint.
+ */
+async function refreshCategory(categoryName) {
+  if (!state.csrfToken) {
+    setStatus("Cannot refresh: CSRF token is missing. Try reloading the page.", "error");
+    return;
+  }
+
+  // Mark this category as refreshing and update button states.
+  state.refreshingCategories.add(categoryName);
+  clearStatus();
+
+  // Update just the button for this category without a full re-render.
+  document.querySelectorAll(".category-refresh-button").forEach((btn) => {
+    if (btn.dataset.category === categoryName) {
+      btn.disabled = true;
+      btn.textContent = "↻ Refreshing…";
+    }
+  });
+
+  try {
+    const response = await fetch(
+      `/api/guide/refresh/${encodeURIComponent(categoryName)}`,
+      {
+        method: "POST",
+        headers: { "X-CSRF-Token": state.csrfToken },
+      },
+    );
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error || `Failed to refresh "${categoryName}".`);
+    }
+
+    state.guide = payload.guide;
+    render();
+    setStatus(`"${categoryName}" refreshed successfully — ${payload.guide.categories[categoryName]?.videos?.length ?? 0} videos cached.`, "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+
+    // Restore button on failure without a full re-render.
+    document.querySelectorAll(".category-refresh-button").forEach((btn) => {
+      if (btn.dataset.category === categoryName) {
+        btn.disabled = state.isSaving;
+        btn.textContent = "↻ Refresh";
+      }
+    });
+  } finally {
+    state.refreshingCategories.delete(categoryName);
   }
 }
 

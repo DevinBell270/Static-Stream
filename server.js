@@ -647,78 +647,72 @@ async function fetchChannelVideos(
   return getVideoDetails(videoIds, apiKey);
 }
 
+/**
+ * Fetches fresh YouTube data for a single category's channel list and returns
+ * the built category object (videos, channelIds, totalDurationSeconds, errors).
+ * Shared by buildDatabase (full rebuild) and the per-category refresh route.
+ */
+async function buildCategoryData(categoryName, channelEntries, apiKey) {
+  if (!apiKey) {
+    return {
+      channelIds: channelEntries.map((e) => e.channelId).filter(Boolean),
+      totalDurationSeconds: 0,
+      videos: [],
+      errors: ["Missing YOUTUBE_API_KEY in .env."],
+    };
+  }
+
+  const collectedVideos = [];
+  const seenVideoIds = new Set();
+  const categoryErrors = [];
+
+  for (const channelEntry of channelEntries) {
+    if (!channelEntry.channelId) {
+      categoryErrors.push(
+        `Channel ${channelEntry.handle || "unknown"} is missing a saved channel ID. Save the config again to resolve it.`,
+      );
+      continue;
+    }
+
+    try {
+      const channelVideos = await fetchChannelVideos(
+        channelEntry.channelId,
+        apiKey,
+        RECENT_UPLOADS_PER_CHANNEL,
+      );
+      const dailyRotation = selectDailyRotation(channelVideos);
+
+      dailyRotation.forEach((video) => {
+        if (seenVideoIds.has(video.videoId)) {
+          return;
+        }
+        seenVideoIds.add(video.videoId);
+        collectedVideos.push(video);
+      });
+    } catch (error) {
+      categoryErrors.push(`Channel ${channelEntry.handle || channelEntry.channelId}: ${error.message}`);
+    }
+  }
+
+  const shuffledVideos = shuffleArray(collectedVideos);
+
+  return {
+    channelIds: channelEntries.map((e) => e.channelId).filter(Boolean),
+    totalDurationSeconds: shuffledVideos.reduce((total, video) => total + video.durationSeconds, 0),
+    videos: shuffledVideos,
+    errors: categoryErrors,
+  };
+}
+
 async function buildDatabase(refreshSource = "manual") {
   const config = await readConfig();
   const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
   const epoch = getWeekEpoch();
   const categories = {};
 
-  if (!apiKey) {
-    for (const [categoryName, channelEntries] of Object.entries(config.categories)) {
-      categories[categoryName] = {
-        channelIds: channelEntries
-          .map((channelEntry) => channelEntry.channelId)
-          .filter(Boolean),
-        totalDurationSeconds: 0,
-        videos: [],
-        errors: ["Missing YOUTUBE_API_KEY in .env."],
-      };
-    }
-
-    return {
-      updatedAt: new Date().toISOString(),
-      epochStart: epoch.toISOString(),
-      refreshSource,
-      categories,
-    };
-  }
-
   for (const [categoryName, channelEntries] of Object.entries(config.categories)) {
-    const collectedVideos = [];
-    const seenVideoIds = new Set();
-    const categoryErrors = [];
-
-    for (const channelEntry of channelEntries) {
-      if (!channelEntry.channelId) {
-        categoryErrors.push(
-          `Channel ${channelEntry.handle || "unknown"} is missing a saved channel ID. Save the config again to resolve it.`,
-        );
-        continue;
-      }
-
-      try {
-        const channelVideos = await fetchChannelVideos(
-          channelEntry.channelId,
-          apiKey,
-          RECENT_UPLOADS_PER_CHANNEL,
-        );
-        const dailyRotation = selectDailyRotation(channelVideos);
-
-        dailyRotation.forEach((video) => {
-          if (seenVideoIds.has(video.videoId)) {
-            return;
-          }
-
-          seenVideoIds.add(video.videoId);
-          collectedVideos.push(video);
-        });
-      } catch (error) {
-        categoryErrors.push(`Channel ${channelEntry.handle || channelEntry.channelId}: ${error.message}`);
-      }
-    }
-    const shuffledVideos = shuffleArray(collectedVideos);
-
-    categories[categoryName] = {
-      channelIds: channelEntries
-        .map((channelEntry) => channelEntry.channelId)
-        .filter(Boolean),
-      totalDurationSeconds: shuffledVideos.reduce(
-        (total, video) => total + video.durationSeconds,
-        0,
-      ),
-      videos: shuffledVideos,
-      errors: categoryErrors,
-    };
+    // eslint-disable-next-line no-await-in-loop
+    categories[categoryName] = await buildCategoryData(categoryName, channelEntries, apiKey);
   }
 
   return {
@@ -933,6 +927,64 @@ app.get("/api/guide", async (request, response) => {
     response.json(database);
   } catch (error) {
     response.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/guide/refresh/:category
+ *
+ * Refreshes a single category in database.json without touching any other
+ * category. Requires admin auth and a valid CSRF token so random callers
+ * cannot burn YouTube API quota.
+ *
+ * Body: (empty)
+ * Response: { category: string, guide: <updated database> }
+ */
+app.post("/api/guide/refresh/:category", authLimiter, adminAuth, async (request, response) => {
+  // Validate CSRF token.
+  const incomingToken = request.headers["x-csrf-token"];
+
+  if (!incomingToken || !crypto.timingSafeEqual(Buffer.from(incomingToken), Buffer.from(CSRF_TOKEN))) {
+    response.status(403).json({ error: "Invalid or missing CSRF token." });
+    return;
+  }
+
+  const categoryName = request.params.category;
+
+  try {
+    const [config, database] = await Promise.all([readConfig(), readDatabase()]);
+
+    if (!Object.hasOwn(config.categories, categoryName)) {
+      response
+        .status(404)
+        .json({ error: `Category "${categoryName}" was not found in the current config.` });
+      return;
+    }
+
+    const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
+    const channelEntries = config.categories[categoryName];
+    const freshCategoryData = await buildCategoryData(categoryName, channelEntries, apiKey);
+
+    const updatedDatabase = {
+      ...database,
+      updatedAt: new Date().toISOString(),
+      categories: {
+        ...database.categories,
+        [categoryName]: freshCategoryData,
+      },
+    };
+
+    await atomicWriteJson(DATABASE_PATH, updatedDatabase);
+
+    lastRefreshStatus.succeededAt = new Date().toISOString();
+    lastRefreshStatus.failedAt = null;
+    lastRefreshStatus.error = null;
+    lastRefreshStatus.isStale = false;
+
+    response.json({ category: categoryName, guide: updatedDatabase });
+  } catch (error) {
+    const statusCode = error.statusCode || 500;
+    response.status(statusCode).json({ error: error.message });
   }
 });
 
