@@ -367,6 +367,29 @@ function addChannelToConfig(categoryName, channelValue) {
   setStatus("Channel added locally. Save changes to rebuild the cached guide.");
 }
 
+const CSRF_EXPIRED_MESSAGE =
+  "Your admin session token expired (for example after a server restart). Refresh the page, then try again.";
+
+async function parseResponseJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+async function refreshCsrfToken() {
+  const response = await fetch("/api/csrf-token");
+  const payload = await parseResponseJson(response);
+
+  if (!response.ok || !payload.csrfToken) {
+    return false;
+  }
+
+  state.csrfToken = payload.csrfToken;
+  return true;
+}
+
 async function saveConfig() {
   clearStatus();
 
@@ -378,25 +401,48 @@ async function saveConfig() {
   setSaving(true);
 
   try {
-    const response = await fetch("/api/config", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRF-Token": state.csrfToken,
-      },
-      body: JSON.stringify(state.config),
-    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await fetch("/api/config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": state.csrfToken,
+        },
+        body: JSON.stringify(state.config),
+      });
 
-    const payload = await response.json();
+      const payload = await parseResponseJson(response);
 
-    if (!response.ok) {
-      throw new Error(payload.error || "Unable to save config.");
+      if (response.ok) {
+        state.config = payload.config;
+        state.guide = payload.guide;
+        render();
+        setStatus("Static Stream updated successfully. The local guide cache has been rebuilt.", "success");
+        return;
+      }
+
+      if (response.status === 403 && attempt === 0) {
+        if (await refreshCsrfToken()) {
+          continue;
+        }
+        setStatus(
+          `${CSRF_EXPIRED_MESSAGE}${payload.error ? ` ${payload.error}` : ""}`,
+          "error",
+        );
+        return;
+      }
+
+      if (response.status === 403) {
+        setStatus(
+          `${CSRF_EXPIRED_MESSAGE}${payload.error ? ` ${payload.error}` : ""}`,
+          "error",
+        );
+        return;
+      }
+
+      setStatus(payload.error || "Unable to save config.", "error");
+      return;
     }
-
-    state.config = payload.config;
-    state.guide = payload.guide;
-    render();
-    setStatus("Static Stream updated successfully. The local guide cache has been rebuilt.", "success");
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -409,6 +455,15 @@ async function saveConfig() {
  * category or the saved config. Uses the dedicated
  * POST /api/guide/refresh/:category endpoint.
  */
+function restoreCategoryRefreshButton(categoryName) {
+  document.querySelectorAll(".category-refresh-button").forEach((btn) => {
+    if (btn.dataset.category === categoryName) {
+      btn.disabled = state.isSaving;
+      btn.textContent = "↻ Refresh";
+    }
+  });
+}
+
 async function refreshCategory(categoryName) {
   if (!state.csrfToken) {
     setStatus("Cannot refresh: CSRF token is missing. Try reloading the page.", "error");
@@ -428,33 +483,55 @@ async function refreshCategory(categoryName) {
   });
 
   try {
-    const response = await fetch(
-      `/api/guide/refresh/${encodeURIComponent(categoryName)}`,
-      {
-        method: "POST",
-        headers: { "X-CSRF-Token": state.csrfToken },
-      },
-    );
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await fetch(
+        `/api/guide/refresh/${encodeURIComponent(categoryName)}`,
+        {
+          method: "POST",
+          headers: { "X-CSRF-Token": state.csrfToken },
+        },
+      );
 
-    const payload = await response.json();
+      const payload = await parseResponseJson(response);
 
-    if (!response.ok) {
-      throw new Error(payload.error || `Failed to refresh "${categoryName}".`);
+      if (response.ok) {
+        state.guide = payload.guide;
+        render();
+        setStatus(
+          `"${categoryName}" refreshed successfully — ${payload.guide.categories[categoryName]?.videos?.length ?? 0} videos cached.`,
+          "success",
+        );
+        return;
+      }
+
+      if (response.status === 403 && attempt === 0) {
+        if (await refreshCsrfToken()) {
+          continue;
+        }
+        setStatus(
+          `${CSRF_EXPIRED_MESSAGE}${payload.error ? ` ${payload.error}` : ""}`,
+          "error",
+        );
+        restoreCategoryRefreshButton(categoryName);
+        return;
+      }
+
+      if (response.status === 403) {
+        setStatus(
+          `${CSRF_EXPIRED_MESSAGE}${payload.error ? ` ${payload.error}` : ""}`,
+          "error",
+        );
+        restoreCategoryRefreshButton(categoryName);
+        return;
+      }
+
+      setStatus(payload.error || `Failed to refresh "${categoryName}".`, "error");
+      restoreCategoryRefreshButton(categoryName);
+      return;
     }
-
-    state.guide = payload.guide;
-    render();
-    setStatus(`"${categoryName}" refreshed successfully — ${payload.guide.categories[categoryName]?.videos?.length ?? 0} videos cached.`, "success");
   } catch (error) {
     setStatus(error.message, "error");
-
-    // Restore button on failure without a full re-render.
-    document.querySelectorAll(".category-refresh-button").forEach((btn) => {
-      if (btn.dataset.category === categoryName) {
-        btn.disabled = state.isSaving;
-        btn.textContent = "↻ Refresh";
-      }
-    });
+    restoreCategoryRefreshButton(categoryName);
   } finally {
     state.refreshingCategories.delete(categoryName);
   }
