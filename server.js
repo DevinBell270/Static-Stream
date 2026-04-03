@@ -827,6 +827,18 @@ app.get("/api/csrf-token", authLimiter, adminAuth, (request, response) => {
   response.json({ csrfToken: CSRF_TOKEN });
 });
 
+// Export config.json as a downloadable file — protected by admin auth.
+app.get("/api/config/export", authLimiter, adminAuth, async (request, response) => {
+  try {
+    const raw = await fs.readFile(CONFIG_PATH, "utf8");
+    response.setHeader("Content-Type", "application/json");
+    response.setHeader("Content-Disposition", 'attachment; filename="config.json"');
+    response.send(raw);
+  } catch (error) {
+    response.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/api/config", authLimiter, adminAuth, async (request, response) => {
   try {
     const config = await readConfig();

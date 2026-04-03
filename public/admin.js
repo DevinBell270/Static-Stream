@@ -17,6 +17,8 @@ const elements = {
   categoriesContainer: document.querySelector("#categories-container"),
   statsStrip: document.querySelector("#stats-strip"),
   statusBanner: document.querySelector("#status-banner"),
+  importButton: document.querySelector("#import-config-button"),
+  importInput: document.querySelector("#import-config-input"),
 };
 
 function cloneConfig() {
@@ -429,6 +431,72 @@ elements.form.addEventListener("submit", (event) => {
 
 elements.saveButton.addEventListener("click", () => {
   saveConfig();
+});
+
+// ── Import / Export ──────────────────────────────────────────────────────────
+
+/**
+ * Opens the hidden file picker when the "Import config.json" button is clicked.
+ */
+elements.importButton.addEventListener("click", () => {
+  elements.importInput.value = "";
+  elements.importInput.click();
+});
+
+/**
+ * Reads the selected JSON file, validates its top-level shape client-side,
+ * then loads it into the in-memory state exactly as if the user had typed it
+ * in manually.  The user still needs to press "Save Changes" to persist it —
+ * giving them a chance to review or tweak before committing.
+ */
+elements.importInput.addEventListener("change", () => {
+  const file = elements.importInput.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.addEventListener("load", (event) => {
+    let parsed;
+
+    try {
+      parsed = JSON.parse(event.target.result);
+    } catch {
+      setStatus("Import failed: the selected file is not valid JSON.", "error");
+      return;
+    }
+
+    // Minimal client-side shape check before touching state.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      typeof parsed.categories !== "object" ||
+      parsed.categories === null ||
+      Array.isArray(parsed.categories)
+    ) {
+      setStatus(
+        'Import failed: the file must be a JSON object with a "categories" key.',
+        "error",
+      );
+      return;
+    }
+
+    state.config = parsed;
+    render();
+    setStatus(
+      `"${file.name}" loaded into the editor. Review the config below, then click Save Changes to apply it.`,
+      "success",
+    );
+  });
+
+  reader.addEventListener("error", () => {
+    setStatus("Import failed: unable to read the selected file.", "error");
+  });
+
+  reader.readAsText(file);
 });
 
 loadDashboard();

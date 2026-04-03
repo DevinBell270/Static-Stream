@@ -1,65 +1,69 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Static Stream TV</title>
-    <link rel="stylesheet" href="/tv.css" />
-  </head>
-  <body>
-    <main class="tv-shell">
-      <div id="player" class="player-frame" aria-label="Static Stream player"></div>
-      <div id="hover-surface" class="hover-surface" aria-hidden="true"></div>
 
-      <section id="guide-overlay" class="guide-overlay visible" aria-label="Electronic program guide">
-        <div class="overlay-header">
-          <section class="guide-hero">
-            <div class="metadata-topline">
-              <p class="guide-kicker">Static Stream</p>
-              <a class="admin-link" href="/admin.html">Open Admin</a>
-            </div>
-            <h1 class="guide-heading">Live TV Guide</h1>
-            <p id="guide-subtitle" class="guide-subtitle">
-              Click any listing below to tune the player, then move the mouse or press a key to reopen the guide.
-            </p>
-          </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Static Stream TV</title>
+  <link rel="stylesheet" href="/tv.css" />
+</head>
 
-          <section class="metadata-panel" aria-label="Current channel details">
-            <p id="current-category" class="current-category">No category selected</p>
-            <h2 id="current-title" class="current-title">Choose a category to tune in.</h2>
-            <p id="current-meta" class="current-meta">
-              Static Stream syncs each category to the same live timeline for every viewer.
-            </p>
-            <div id="tv-status" class="tv-status" role="status" aria-live="polite"></div>
-          </section>
+<body>
+  <main class="tv-shell">
+    <div id="player" class="player-frame" aria-label="Static Stream player"></div>
+    <div id="hover-surface" class="hover-surface" aria-hidden="true"></div>
+
+    <section id="guide-overlay" class="guide-overlay visible" aria-label="Electronic program guide">
+      <div class="overlay-header">
+        <section class="guide-hero">
+          <div class="metadata-topline">
+            <p class="guide-kicker">Static Stream</p>
+            <a class="admin-link" href="/admin.html">Open Admin</a>
+          </div>
+          <h1 class="guide-heading">Live TV Guide</h1>
+          <p id="guide-subtitle" class="guide-subtitle">
+            Click any listing below to tune the player, then move the mouse or press a key to reopen the guide.
+          </p>
+        </section>
+
+        <section class="metadata-panel" aria-label="Current channel details">
+          <p id="current-category" class="current-category">No category selected</p>
+          <h2 id="current-title" class="current-title">Choose a category to tune in.</h2>
+          <p id="current-meta" class="current-meta">
+            Static Stream syncs each category to the same live timeline for every viewer.
+          </p>
+          <div id="tv-status" class="tv-status" role="status" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <section class="epg-grid-shell">
+        <div class="timebar-shell">
+          <div class="timebar-label">Channels</div>
+          <div id="timebar-scroll" class="timebar-scroll" aria-hidden="true">
+            <div id="timebar-track" class="timebar-track"></div>
+          </div>
         </div>
 
-        <section class="epg-grid-shell">
-          <div class="timebar-shell">
-            <div class="timebar-label">Channels</div>
-            <div id="timebar-scroll" class="timebar-scroll" aria-hidden="true">
-              <div id="timebar-track" class="timebar-track"></div>
-            </div>
-          </div>
-
-          <div class="grid-shell">
-            <div id="guide-grid" class="guide-grid" role="grid" aria-label="Program schedule"></div>
-            <div id="playhead" class="playhead" aria-hidden="true"></div>
-          </div>
-        </section>
+        <div class="grid-shell">
+          <div id="guide-grid" class="guide-grid" role="grid" aria-label="Program schedule"></div>
+          <div id="playhead" class="playhead" aria-hidden="true"></div>
+        </div>
       </section>
-    </main>
+    </section>
+  </main>
 
-    <aside id="stale-banner" class="stale-banner" role="alert" aria-live="assertive" hidden>
-      <span class="stale-banner-icon" aria-hidden="true">⚠️</span>
-      <div class="stale-banner-body">
-        <strong>API Unavailable — Yesterday's Content</strong>
-        <span id="stale-banner-detail">The scheduled refresh failed. Showing cached content from the last successful update.</span>
-      </div>
-      <button id="stale-banner-close" class="stale-banner-close" type="button" aria-label="Dismiss notice">✕</button>
-    </aside>
+  <aside id="stale-banner" class="stale-banner" role="alert" aria-live="assertive" hidden>
+    <span class="stale-banner-icon" aria-hidden="true">⚠️</span>
+    <div class="stale-banner-body">
+      <strong>API Unavailable — Yesterday's Content</strong>
+      <span id="stale-banner-detail">The scheduled refresh failed. Showing cached content from the last successful
+        update.</span>
+    </div>
+    <button id="stale-banner-close" class="stale-banner-close" type="button" aria-label="Dismiss notice">✕</button>
+  </aside>
 
-    <script src="https://www.youtube.com/iframe_api"></script>
-    <script src="/tv.js" defer></script>
-  </body>
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="/tv.js" defer></script>
+</body>
+
 </html>

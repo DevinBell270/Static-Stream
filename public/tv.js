@@ -67,7 +67,7 @@ function hideOverlay() {
 
 function showOverlay({ persist = false, mode = "full" } = {}) {
   elements.overlay.classList.add("visible");
-  
+
   if (mode === "info") {
     elements.overlay.classList.add("info-only");
   } else {
@@ -458,7 +458,7 @@ function renderSchedule({ centerOnNow = false } = {}) {
   const nowMs = Date.now();
   const previousScrollTop = elements.guideGrid.scrollTop;
   const previousScrollLeft = elements.guideGrid.scrollLeft;
-  
+
   const labelWidth = document.querySelector(".timebar-label")?.offsetWidth || 220;
   const viewportWidth = Math.max(elements.guideGrid.clientWidth - labelWidth, 300);
   PIXELS_PER_MINUTE = Math.max(10, viewportWidth / 120);
@@ -781,7 +781,7 @@ function scrollToFocusedRow() {
 
 function handleVerticalNav(step) {
   const isFullMode = elements.overlay.classList.contains("visible") && !elements.overlay.classList.contains("info-only");
-  
+
   if (!isFullMode) {
     showOverlay({ mode: "full" });
     state.focusedCategory = state.currentCategory;
@@ -798,7 +798,7 @@ function handleVerticalNav(step) {
   const currentFocus = state.focusedCategory || state.currentCategory;
   const currentIndex = playableRows.findIndex((row) => row.categoryName === currentFocus);
   const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-  
+
   let nextIndex = safeIndex + step;
   if (nextIndex < 0) nextIndex = playableRows.length - 1;
   if (nextIndex >= playableRows.length) nextIndex = 0;
