@@ -4,7 +4,11 @@ const state = {
   csrfToken: null,
   isSaving: false,
   refreshingCategories: new Set(), // category names currently being refreshed
+  nextScheduledRefreshAt: null,
+  refreshIntervalHours: null,
 };
+
+let nextRefreshCountdownIntervalId = null;
 
 const elements = {
   categoryForm: document.querySelector("#category-form"),
@@ -120,6 +124,55 @@ function syncChannelFormState() {
   elements.addChannelButton.disabled = state.isSaving || !hasCategories;
 }
 
+function clearNextRefreshCountdown() {
+  if (nextRefreshCountdownIntervalId !== null) {
+    clearInterval(nextRefreshCountdownIntervalId);
+    nextRefreshCountdownIntervalId = null;
+  }
+}
+
+function startNextRefreshCountdown() {
+  clearNextRefreshCountdown();
+  nextRefreshCountdownIntervalId = window.setInterval(() => {
+    renderStats();
+  }, 45_000);
+}
+
+/**
+ * @param {string | null} isoString
+ * @returns {string}
+ */
+function formatNextRefreshRemaining(isoString) {
+  if (!isoString) {
+    return "—";
+  }
+
+  const target = Date.parse(isoString);
+
+  if (Number.isNaN(target)) {
+    return "—";
+  }
+
+  const ms = Math.max(0, target - Date.now());
+  const totalMinutes = Math.floor(ms / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+
+  return "<1m";
+}
+
+window.addEventListener("beforeunload", () => {
+  clearNextRefreshCountdown();
+});
+
 function renderCategoryOptions() {
   const selectedCategoryName = getSelectedCategoryName();
   const entries = getCategoryEntries();
@@ -222,13 +275,30 @@ function renderStats() {
     { value: categories.length, label: "Categories" },
     { value: totalChannels, label: "Tracked Channels" },
     { value: totalVideos, label: "Cached Videos" },
+    {
+      value: formatNextRefreshRemaining(state.nextScheduledRefreshAt),
+      label: "Next scheduled refresh",
+      title:
+        state.refreshIntervalHours != null
+          ? `Scheduled full guide refresh every ${state.refreshIntervalHours} hour${
+              state.refreshIntervalHours === 1 ? "" : "s"
+            }.`
+          : "",
+    },
   ];
 
   elements.statsStrip.replaceChildren(
     ...cards.map((card) => {
       const article = document.createElement("article");
       article.className = "stat-card";
-      article.innerHTML = `<strong>${card.value}</strong><span>${card.label}</span>`;
+      if (card.title) {
+        article.title = card.title;
+      }
+      const strong = document.createElement("strong");
+      strong.textContent = String(card.value);
+      const span = document.createElement("span");
+      span.textContent = card.label;
+      article.append(strong, span);
       return article;
     }),
   );
@@ -542,16 +612,18 @@ async function loadDashboard() {
   clearStatus();
 
   try {
-    const [configResponse, guideResponse, csrfResponse] = await Promise.all([
+    const [configResponse, guideResponse, csrfResponse, statusResponse] = await Promise.all([
       fetch("/api/config"),
       fetch("/api/guide"),
       fetch("/api/csrf-token"),
+      fetch("/api/status"),
     ]);
 
-    const [configPayload, guidePayload, csrfPayload] = await Promise.all([
+    const [configPayload, guidePayload, csrfPayload, statusPayload] = await Promise.all([
       configResponse.json(),
       guideResponse.json(),
       csrfResponse.json(),
+      statusResponse.json(),
     ]);
 
     if (!configResponse.ok) {
@@ -566,6 +638,19 @@ async function loadDashboard() {
       throw new Error("Unable to load security token. Reload the page to try again.");
     }
 
+    if (statusResponse.ok) {
+      state.nextScheduledRefreshAt = statusPayload.nextScheduledRefreshAt ?? null;
+      state.refreshIntervalHours =
+        typeof statusPayload.refreshIntervalHours === "number"
+          ? statusPayload.refreshIntervalHours
+          : null;
+      startNextRefreshCountdown();
+    } else {
+      state.nextScheduledRefreshAt = null;
+      state.refreshIntervalHours = null;
+      clearNextRefreshCountdown();
+    }
+
     state.config = configPayload;
     state.guide = guidePayload;
     state.csrfToken = csrfPayload.csrfToken;
@@ -576,6 +661,9 @@ async function loadDashboard() {
     }
   } catch (error) {
     setStatus(error.message, "error");
+    state.nextScheduledRefreshAt = null;
+    state.refreshIntervalHours = null;
+    clearNextRefreshCountdown();
   } finally {
     setSaving(false);
   }

@@ -126,6 +126,21 @@ function markLastRefreshSucceeded() {
   lastRefreshStatus.isStale = false;
 }
 
+/** Set when `schedulePeriodicRefresh()` runs; used to compute the next interval tick for `/api/status`. */
+let periodicRefreshAnchorMs = null;
+
+function getNextScheduledPeriodicRefreshIso() {
+  if (periodicRefreshAnchorMs == null) {
+    return null;
+  }
+
+  const now = Date.now();
+  const k = Math.floor((now - periodicRefreshAnchorMs) / REFRESH_INTERVAL_MS) + 1;
+  const nextMs = periodicRefreshAnchorMs + k * REFRESH_INTERVAL_MS;
+
+  return new Date(nextMs).toISOString();
+}
+
 // ── Security headers ────────────────────────────────────────────────────────
 app.use(
   helmet({
@@ -872,6 +887,7 @@ async function refreshDatabase(refreshSource) {
 }
 
 function schedulePeriodicRefresh() {
+  periodicRefreshAnchorMs = Date.now();
   setInterval(() => {
     refreshDatabase("scheduled_interval").catch((error) => {
       console.error("Failed scheduled Static Stream refresh:", error.message);
@@ -1102,6 +1118,8 @@ app.get("/api/status", (request, response) => {
     succeededAt: lastRefreshStatus.succeededAt,
     failedAt: lastRefreshStatus.failedAt,
     error: lastRefreshStatus.error ? "Refresh failed. Check server logs." : null,
+    nextScheduledRefreshAt: getNextScheduledPeriodicRefreshIso(),
+    refreshIntervalHours: REFRESH_INTERVAL_HOURS,
   });
 });
 
