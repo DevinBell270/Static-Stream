@@ -827,6 +827,59 @@ app.get("/api/csrf-token", authLimiter, adminAuth, (request, response) => {
   response.json({ csrfToken: CSRF_TOKEN });
 });
 
+/**
+ * GET /api/channel-preview?handle=@foo
+ *
+ * Resolves a YouTube handle to its channel title and thumbnail using a single
+ * lightweight Channels API call (part=snippet only). Used by the admin UI to
+ * give the user instant visual confirmation before they save a new channel.
+ *
+ * Protected by adminAuth + authLimiter so the API key is never exposed
+ * to unauthenticated callers.
+ */
+app.get("/api/channel-preview", authLimiter, adminAuth, async (request, response) => {
+  const rawHandle = String(request.query.handle || "").trim();
+
+  if (!rawHandle.startsWith("@") || rawHandle.length < 2) {
+    response.status(400).json({ error: "A valid YouTube handle starting with \"@\" is required." });
+    return;
+  }
+
+  const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
+
+  if (!apiKey) {
+    response.status(500).json({ error: "YOUTUBE_API_KEY is not configured." });
+    return;
+  }
+
+  try {
+    const payload = await fetchYouTubeJson("channels", {
+      part: "snippet",
+      forHandle: rawHandle.replace(/^@/, ""),
+      key: apiKey,
+    });
+
+    const item = payload.items?.[0];
+
+    if (!item) {
+      response.status(404).json({ error: `No YouTube channel found for handle "${rawHandle}".` });
+      return;
+    }
+
+    response.json({
+      channelId: item.id,
+      title: item.snippet?.title || rawHandle,
+      thumbnail:
+        item.snippet?.thumbnails?.medium?.url ||
+        item.snippet?.thumbnails?.default?.url ||
+        null,
+    });
+  } catch (error) {
+    const statusCode = error.statusCode || 502;
+    response.status(statusCode).json({ error: error.message });
+  }
+});
+
 // Export config.json as a downloadable file — protected by admin auth.
 app.get("/api/config/export", authLimiter, adminAuth, async (request, response) => {
   try {

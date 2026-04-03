@@ -59,16 +59,19 @@
             <select id="category-name" name="category" required></select>
           </label>
 
-          <label>
-            <span>YouTube Handle</span>
-            <input
-              id="channel-id"
-              type="text"
-              name="channelHandle"
-              placeholder="@yourchannel"
-              required
-            />
-          </label>
+          <div class="channel-input-group">
+            <label>
+              <span>YouTube Handle</span>
+              <input
+                id="channel-id"
+                type="text"
+                name="channelHandle"
+                placeholder="@yourchannel"
+                required
+              />
+            </label>
+            <div id="channel-preview" class="channel-preview" aria-live="polite"></div>
+          </div>
 
           <button id="add-channel-button" type="submit">Add Channel</button>
         </form>
