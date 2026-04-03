@@ -109,6 +109,10 @@ The root URL redirects to the TV player:
 
 - [http://localhost:3000](http://localhost:3000)
 
+## Security & Remote Access
+
+Static Stream uses HTTP Basic Authentication to protect the admin dashboard (`/admin.html`). Because Basic Auth encodes credentials rather than encrypting them, you must not expose this application directly to the open internet.
+
 ## How Data Works
 
 Static Stream uses a zero-database setup:
