@@ -19,6 +19,12 @@ const channelFetchLimit = pLimit(CHANNEL_FETCH_CONCURRENCY);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Behind a reverse proxy, set TRUST_PROXY (e.g. 1) so req.ip is the real client — needed for fair per-IP limits.
+if (process.env.TRUST_PROXY) {
+  const hops = Number.parseInt(process.env.TRUST_PROXY, 10);
+  app.set("trust proxy", Number.isNaN(hops) ? 1 : hops);
+}
+
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
@@ -39,6 +45,27 @@ const authLimiter = rateLimit({
   message: "Too many login attempts from this IP, please try again after 15 minutes",
 });
 
+const PUBLIC_READ_RATE_LIMIT_WINDOW_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.PUBLIC_READ_RATE_LIMIT_WINDOW_MS || "60000", 10) || 60_000,
+);
+const PUBLIC_READ_RATE_LIMIT_MAX = Math.max(
+  1,
+  Number.parseInt(process.env.PUBLIC_READ_RATE_LIMIT_MAX || "120", 10) || 120,
+);
+
+const publicReadLimiter = rateLimit({
+  windowMs: PUBLIC_READ_RATE_LIMIT_WINDOW_MS,
+  max: PUBLIC_READ_RATE_LIMIT_MAX,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (request, response, _next, options) => {
+    response.status(options.statusCode).json({
+      error: "Too many requests from this IP. Please try again later.",
+    });
+  },
+});
+
 // CSRF — one opaque token per server process lifetime.
 // Rotates automatically on every restart.
 const CSRF_TOKEN = crypto.randomBytes(32).toString("hex");
@@ -56,6 +83,10 @@ const ROOT_DIR = __dirname;
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const CONFIG_PATH = path.join(ROOT_DIR, "config.json");
 const DATABASE_PATH = path.join(ROOT_DIR, "database.json");
+const databaseCacheTtlParsed = Number.parseInt(process.env.DATABASE_READ_CACHE_TTL_MS ?? "2000", 10);
+const DATABASE_READ_CACHE_TTL_MS = Number.isNaN(databaseCacheTtlParsed)
+  ? 2000
+  : Math.max(0, databaseCacheTtlParsed);
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
 const DEFAULT_CONFIG = {
@@ -73,6 +104,9 @@ const DEFAULT_DATABASE = {
 };
 
 let refreshPromise = null;
+
+const databaseCacheEntry = { value: null, expiresAt: 0 };
+let databaseReadInFlight = null;
 
 /**
  * Tracks the outcome of the most recent database refresh attempt.
@@ -432,8 +466,42 @@ async function readConfig() {
   return normalizeConfig(config);
 }
 
-async function readDatabase() {
+async function readDatabaseFromDisk() {
   return readJson(DATABASE_PATH, DEFAULT_DATABASE);
+}
+
+function replaceDatabaseCache(nextValue) {
+  if (DATABASE_READ_CACHE_TTL_MS <= 0) {
+    return;
+  }
+  databaseCacheEntry.value = nextValue;
+  databaseCacheEntry.expiresAt = Date.now() + DATABASE_READ_CACHE_TTL_MS;
+}
+
+async function readDatabase() {
+  if (DATABASE_READ_CACHE_TTL_MS <= 0) {
+    return readDatabaseFromDisk();
+  }
+
+  const now = Date.now();
+  if (databaseCacheEntry.value !== null && now < databaseCacheEntry.expiresAt) {
+    return databaseCacheEntry.value;
+  }
+
+  if (databaseReadInFlight) {
+    return databaseReadInFlight;
+  }
+
+  databaseReadInFlight = (async () => {
+    const parsed = await readDatabaseFromDisk();
+    databaseCacheEntry.value = parsed;
+    databaseCacheEntry.expiresAt = Date.now() + DATABASE_READ_CACHE_TTL_MS;
+    return parsed;
+  })().finally(() => {
+    databaseReadInFlight = null;
+  });
+
+  return databaseReadInFlight;
 }
 
 function getWeekEpoch(date = new Date()) {
@@ -776,6 +844,7 @@ async function refreshDatabase(refreshSource) {
     try {
       const database = await buildDatabase(refreshSource);
       await atomicWriteJson(DATABASE_PATH, database);
+      replaceDatabaseCache(database);
 
       markLastRefreshSucceeded();
 
@@ -962,7 +1031,7 @@ app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
   }
 });
 
-app.get("/api/guide", async (request, response) => {
+app.get("/api/guide", publicReadLimiter, async (request, response) => {
   try {
     const database = await readDatabase();
     response.json(database);
@@ -1016,6 +1085,7 @@ app.post("/api/guide/refresh/:category", authLimiter, adminAuth, async (request,
     };
 
     await atomicWriteJson(DATABASE_PATH, updatedDatabase);
+    replaceDatabaseCache(updatedDatabase);
 
     markLastRefreshSucceeded();
 
@@ -1035,7 +1105,7 @@ app.get("/api/status", (request, response) => {
   });
 });
 
-app.get("/api/tune-in/:category", async (request, response) => {
+app.get("/api/tune-in/:category", publicReadLimiter, async (request, response) => {
   try {
     const database = await readDatabase();
     const categoryName = request.params.category;
