@@ -83,10 +83,6 @@ const ROOT_DIR = __dirname;
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const CONFIG_PATH = path.join(ROOT_DIR, "config.json");
 const DATABASE_PATH = path.join(ROOT_DIR, "database.json");
-const databaseCacheTtlParsed = Number.parseInt(process.env.DATABASE_READ_CACHE_TTL_MS ?? "2000", 10);
-const DATABASE_READ_CACHE_TTL_MS = Number.isNaN(databaseCacheTtlParsed)
-  ? 2000
-  : Math.max(0, databaseCacheTtlParsed);
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
 const DEFAULT_CONFIG = {
@@ -105,7 +101,7 @@ const DEFAULT_DATABASE = {
 
 let refreshPromise = null;
 
-const databaseCacheEntry = { value: null, expiresAt: 0 };
+let cachedDatabase = null;
 let databaseReadInFlight = null;
 
 /**
@@ -316,6 +312,14 @@ async function atomicWriteJson(filePath, data) {
   await fs.rename(tmpPath, filePath);
 }
 
+/**
+ * Persists database.json and updates the in-memory guide cache (single write choke point).
+ */
+async function writeDatabase(database) {
+  await atomicWriteJson(DATABASE_PATH, database);
+  cachedDatabase = database;
+}
+
 async function readJson(filePath, fallbackValue) {
   try {
     const raw = await fs.readFile(filePath, "utf8");
@@ -332,7 +336,11 @@ async function readJson(filePath, fallbackValue) {
 
 async function ensureDataFiles() {
   await ensureFile(CONFIG_PATH, DEFAULT_CONFIG);
-  await ensureFile(DATABASE_PATH, DEFAULT_DATABASE);
+  try {
+    await fs.access(DATABASE_PATH);
+  } catch {
+    await writeDatabase(DEFAULT_DATABASE);
+  }
 }
 
 // Allowed keys on a channel entry object.
@@ -482,25 +490,22 @@ async function readConfig() {
 }
 
 async function readDatabaseFromDisk() {
-  return readJson(DATABASE_PATH, DEFAULT_DATABASE);
-}
+  try {
+    const raw = await fs.readFile(DATABASE_PATH, "utf8");
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      await writeDatabase(DEFAULT_DATABASE);
+      return DEFAULT_DATABASE;
+    }
 
-function replaceDatabaseCache(nextValue) {
-  if (DATABASE_READ_CACHE_TTL_MS <= 0) {
-    return;
+    throw error;
   }
-  databaseCacheEntry.value = nextValue;
-  databaseCacheEntry.expiresAt = Date.now() + DATABASE_READ_CACHE_TTL_MS;
 }
 
 async function readDatabase() {
-  if (DATABASE_READ_CACHE_TTL_MS <= 0) {
-    return readDatabaseFromDisk();
-  }
-
-  const now = Date.now();
-  if (databaseCacheEntry.value !== null && now < databaseCacheEntry.expiresAt) {
-    return databaseCacheEntry.value;
+  if (cachedDatabase !== null) {
+    return cachedDatabase;
   }
 
   if (databaseReadInFlight) {
@@ -509,8 +514,7 @@ async function readDatabase() {
 
   databaseReadInFlight = (async () => {
     const parsed = await readDatabaseFromDisk();
-    databaseCacheEntry.value = parsed;
-    databaseCacheEntry.expiresAt = Date.now() + DATABASE_READ_CACHE_TTL_MS;
+    cachedDatabase = parsed;
     return parsed;
   })().finally(() => {
     databaseReadInFlight = null;
@@ -858,8 +862,7 @@ async function refreshDatabase(refreshSource) {
   refreshPromise = (async () => {
     try {
       const database = await buildDatabase(refreshSource);
-      await atomicWriteJson(DATABASE_PATH, database);
-      replaceDatabaseCache(database);
+      await writeDatabase(database);
 
       markLastRefreshSucceeded();
 
@@ -1100,8 +1103,7 @@ app.post("/api/guide/refresh/:category", authLimiter, adminAuth, async (request,
       },
     };
 
-    await atomicWriteJson(DATABASE_PATH, updatedDatabase);
-    replaceDatabaseCache(updatedDatabase);
+    await writeDatabase(updatedDatabase);
 
     markLastRefreshSucceeded();
 
