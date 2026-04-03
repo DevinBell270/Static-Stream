@@ -245,6 +245,31 @@ body {
   margin-bottom: 1rem;
 }
 
+.category-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.category-refresh-button {
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 999px;
+  padding: 0.55rem 0.85rem;
+  background: rgba(125, 211, 252, 0.08);
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+
+.category-refresh-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: rgba(125, 211, 252, 0.16);
+  border-color: rgba(125, 211, 252, 0.42);
+}
+
 .category-meta {
   margin: 0 0 1rem;
   color: var(--text-muted);
@@ -345,6 +370,10 @@ button:disabled {
 
   .category-card-header {
     flex-direction: column;
+  }
+
+  .category-card-actions {
+    flex-wrap: wrap;
   }
 
   .primary-button {
