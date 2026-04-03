@@ -1056,6 +1056,8 @@ app.get("/api/tune-in/:category", async (request, response) => {
     const liveOffsetSeconds = ((elapsedSeconds % category.totalDurationSeconds) + category.totalDurationSeconds)
       % category.totalDurationSeconds;
     const liveSlot = resolveLiveSlot(category.videos, liveOffsetSeconds);
+    const nextIndex = (liveSlot.currentIndex + 1) % category.videos.length;
+    const nextVideoEntry = category.videos[nextIndex];
 
     response.json({
       category: categoryName,
@@ -1068,6 +1070,11 @@ app.get("/api/tune-in/:category", async (request, response) => {
       thumbnail: liveSlot.video.thumbnail,
       durationSeconds: liveSlot.video.durationSeconds,
       startSeconds: liveSlot.startSeconds,
+      nextVideo: {
+        videoId: nextVideoEntry.videoId,
+        title: nextVideoEntry.title,
+        durationSeconds: nextVideoEntry.durationSeconds,
+      },
     });
   } catch (error) {
     response.status(500).json({ error: error.message });
