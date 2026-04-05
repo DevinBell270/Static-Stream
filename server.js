@@ -10,7 +10,12 @@ const striptags = require("striptags");
 const rateLimit = require("express-rate-limit");
 const pLimit = require("p-limit");
 
-dotenv.config();
+// Load `.env` from this app directory (not process.cwd()), and let the file win over
+// shell exports in non-production so local edits actually apply after restart.
+dotenv.config({
+  path: path.join(__dirname, ".env"),
+  override: process.env.NODE_ENV !== "production",
+});
 
 /** Caps concurrent YouTube channel fetches per category (quota / burst control). */
 const CHANNEL_FETCH_CONCURRENCY = 3;
@@ -71,7 +76,9 @@ const publicReadLimiter = rateLimit({
 const CSRF_TOKEN = crypto.randomBytes(32).toString("hex");
 
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
-const STARTUP_CACHE_MAX_AGE_HOURS = 6;
+const parsedStartupCacheHours = Number.parseInt(process.env.STARTUP_CACHE_MAX_AGE_HOURS ?? "6", 10);
+const STARTUP_CACHE_MAX_AGE_HOURS =
+  Number.isFinite(parsedStartupCacheHours) && parsedStartupCacheHours >= 0 ? parsedStartupCacheHours : 6;
 const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
 const RECENT_UPLOADS_PER_CHANNEL = 30;
 const DAILY_ROTATION_RECENT_COUNT = 2;
@@ -149,8 +156,9 @@ app.use(
         frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com"],
         // All API fetches are same-origin; no extra connect origins needed.
         connectSrc: ["'self'"],
-        // Styles are served locally.
-        styleSrc: ["'self'"],
+        // Allow inline / JS-set styles for the TV schedule layout and small UI tweaks.
+        // Script remains locked down; this only relaxes style attribution.
+        styleSrc: ["'self'", "'unsafe-inline'"],
         // YouTube thumbnail images come from these CDNs.
         imgSrc: ["'self'", "https://i.ytimg.com", "https://img.youtube.com", "data:"],
         // No plugins, objects, or base-URI shenanigans.
@@ -610,7 +618,9 @@ async function fetchYouTubeJson(endpoint, searchParams) {
 
   if (!response.ok) {
     const message = payload.error?.message || `YouTube API request failed with ${response.status}.`;
-    throw new Error(message);
+    const status =
+      response.status >= 400 && response.status < 600 ? response.status : 502;
+    throw createStatusError(message, status);
   }
 
   return payload;
@@ -1053,6 +1063,7 @@ app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
 app.get("/api/guide", publicReadLimiter, async (request, response) => {
   try {
     const database = await readDatabase();
+    response.setHeader("Cache-Control", "no-store");
     response.json(database);
   } catch (error) {
     response.status(500).json({ error: error.message });
@@ -1115,6 +1126,7 @@ app.post("/api/guide/refresh/:category", authLimiter, adminAuth, async (request,
 });
 
 app.get("/api/status", (request, response) => {
+  response.setHeader("Cache-Control", "no-store");
   response.json({
     isStale: lastRefreshStatus.isStale,
     succeededAt: lastRefreshStatus.succeededAt,
@@ -1151,6 +1163,7 @@ app.get("/api/tune-in/:category", publicReadLimiter, async (request, response) =
     const nextIndex = (liveSlot.currentIndex + 1) % category.videos.length;
     const nextVideoEntry = category.videos[nextIndex];
 
+    response.setHeader("Cache-Control", "no-store");
     response.json({
       category: categoryName,
       playlistDurationSeconds: category.totalDurationSeconds,
