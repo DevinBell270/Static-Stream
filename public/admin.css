@@ -494,3 +494,7 @@ button:disabled {
     transform: rotate(360deg);
   }
 }
+
+.file-input-hidden {
+  display: none;
+}
