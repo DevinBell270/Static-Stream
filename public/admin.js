@@ -186,6 +186,11 @@ function getChannelPrimaryLabel(channelEntry) {
   return channelEntry.handle || channelEntry.channelId || "Unknown Channel";
 }
 
+function getChannelDisplayName(categoryName, channelEntry, guideChannelTitleLookup) {
+  return getChannelDerivedTitle(categoryName, channelEntry, guideChannelTitleLookup)
+    || getChannelPrimaryLabel(channelEntry);
+}
+
 function getGuideChannelTitleLookup() {
   const titlesByCategory = new Map();
 
@@ -222,14 +227,6 @@ function channelEntryMatchesFilter(categoryName, channelEntry, normalizedQuery, 
   return [derivedTitle, channelEntry.handle, channelEntry.channelId].some((value) =>
     normalizeFilterQuery(value).includes(normalizedQuery),
   );
-}
-
-function getChannelSecondaryLabel(channelEntry) {
-  if (channelEntry.handle && channelEntry.channelId) {
-    return channelEntry.channelId;
-  }
-
-  return "";
 }
 
 function clearNextRefreshCountdown() {
@@ -386,7 +383,9 @@ function buildDeleteButton(categoryName, channelEntry) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "delete-button";
-  button.textContent = "Delete";
+  button.textContent = "🗑️";
+  button.setAttribute("aria-label", `Delete ${getChannelPrimaryLabel(channelEntry)}`);
+  button.title = "Delete channel";
   button.addEventListener("click", () => {
     const nextConfig = cloneConfig();
     nextConfig.categories[categoryName] = nextConfig.categories[categoryName].filter(
@@ -603,11 +602,12 @@ function renderCategories() {
           const content = document.createElement("div");
           content.className = "channel-pill-content";
 
-          const code = document.createElement("code");
-          code.textContent = getChannelPrimaryLabel(channelEntry);
-          content.append(code);
+          const name = document.createElement("span");
+          name.className = "channel-pill-name";
+          name.textContent = getChannelDisplayName(categoryName, channelEntry, guideChannelTitleLookup);
+          content.append(name);
 
-          const secondaryLabel = getChannelSecondaryLabel(channelEntry);
+          const secondaryLabel = channelEntry.handle || "";
 
           if (secondaryLabel) {
             const meta = document.createElement("span");
