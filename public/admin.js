@@ -5,6 +5,7 @@ const state = {
   isSaving: false,
   refreshingCategories: new Set(), // category names currently being refreshed
   collapsedCategories: new Set(),
+  filterQuery: "",
   nextScheduledRefreshAt: null,
   refreshIntervalHours: null,
   /** After adding a channel, focus this category's inline input on next paint. */
@@ -22,6 +23,8 @@ const elements = {
   addCategoryButton: document.querySelector("#add-category-button"),
   saveButton: document.querySelector("#save-config-button"),
   toggleAllCategoriesButton: document.querySelector("#toggle-all-categories-button"),
+  globalFilterInput: document.querySelector("#global-channel-filter"),
+  clearGlobalFilterButton: document.querySelector("#clear-global-filter-button"),
   categoriesContainer: document.querySelector("#categories-container"),
   statsStrip: document.querySelector("#stats-strip"),
   statusBanner: document.querySelector("#status-banner"),
@@ -58,6 +61,24 @@ function syncInlineAddControls() {
       button.disabled = state.isSaving;
     }
   });
+}
+
+function normalizeFilterQuery(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function hasActiveFilterQuery() {
+  return normalizeFilterQuery(state.filterQuery).length > 0;
+}
+
+function syncGuideFilterControls() {
+  if (elements.globalFilterInput && elements.globalFilterInput.value !== state.filterQuery) {
+    elements.globalFilterInput.value = state.filterQuery;
+  }
+
+  if (elements.clearGlobalFilterButton) {
+    elements.clearGlobalFilterButton.hidden = normalizeFilterQuery(state.filterQuery).length === 0;
+  }
 }
 
 function setSaving(isSaving) {
@@ -110,9 +131,17 @@ function pruneCollapsedCategories() {
 function syncToggleAllCategoriesButton() {
   const entries = getCategoryEntries();
   const hasCategories = entries.length > 0;
-  elements.toggleAllCategoriesButton.disabled = !hasCategories;
+  const filterLocked = hasActiveFilterQuery();
+  elements.toggleAllCategoriesButton.disabled = !hasCategories || filterLocked;
   elements.toggleAllCategoriesButton.textContent =
-    hasCategories && areAllCategoriesCollapsed() ? "Expand All" : "Collapse All";
+    filterLocked || !hasCategories
+      ? "Collapse All"
+      : areAllCategoriesCollapsed()
+        ? "Expand All"
+        : "Collapse All";
+  elements.toggleAllCategoriesButton.title = filterLocked
+    ? "Clear the global filter to collapse or expand categories."
+    : "";
 }
 
 /**
@@ -155,6 +184,44 @@ function channelEntriesMatch(leftEntry, rightEntry) {
 
 function getChannelPrimaryLabel(channelEntry) {
   return channelEntry.handle || channelEntry.channelId || "Unknown Channel";
+}
+
+function getGuideChannelTitleLookup() {
+  const titlesByCategory = new Map();
+
+  Object.entries(state.guide.categories || {}).forEach(([categoryName, guideCategory]) => {
+    const titlesByChannelId = new Map();
+
+    (guideCategory?.videos || []).forEach((video) => {
+      const channelId = String(video.channelId || "").trim();
+      const channelTitle = String(video.channelTitle || "").trim();
+
+      if (channelId && channelTitle && !titlesByChannelId.has(channelId)) {
+        titlesByChannelId.set(channelId, channelTitle);
+      }
+    });
+
+    titlesByCategory.set(categoryName, titlesByChannelId);
+  });
+
+  return titlesByCategory;
+}
+
+function getChannelDerivedTitle(categoryName, channelEntry, guideChannelTitleLookup) {
+  const channelId = String(channelEntry.channelId || "").trim();
+
+  if (!channelId) {
+    return "";
+  }
+
+  return guideChannelTitleLookup.get(categoryName)?.get(channelId) || "";
+}
+
+function channelEntryMatchesFilter(categoryName, channelEntry, normalizedQuery, guideChannelTitleLookup) {
+  const derivedTitle = getChannelDerivedTitle(categoryName, channelEntry, guideChannelTitleLookup);
+  return [derivedTitle, channelEntry.handle, channelEntry.channelId].some((value) =>
+    normalizeFilterQuery(value).includes(normalizedQuery),
+  );
 }
 
 function getChannelSecondaryLabel(channelEntry) {
@@ -406,18 +473,62 @@ function renderCategories() {
   previewTimersByCategory.clear();
 
   const entries = getCategoryEntries();
+  const normalizedFilterQuery = normalizeFilterQuery(state.filterQuery);
 
   if (entries.length === 0) {
-    elements.categoriesContainer.innerHTML =
-      '<div class="empty-state">No categories yet. Create a category above, then add YouTube handles in each category card below.</div>';
+    const emptyState = document.createElement("div");
+    emptyState.className = "empty-state";
+    emptyState.textContent =
+      "No categories yet. Create a category above, then add YouTube handles in each category card below.";
+    elements.categoriesContainer.replaceChildren(emptyState);
+    return;
+  }
+
+  const guideChannelTitleLookup = getGuideChannelTitleLookup();
+  const filteredEntries =
+    normalizedFilterQuery.length === 0
+      ? entries.map(([categoryName, channelEntries]) => ({
+          categoryName,
+          channelEntries,
+          visibleChannelEntries: channelEntries,
+        }))
+      : entries.flatMap(([categoryName, channelEntries]) => {
+          const visibleChannelEntries = channelEntries.filter((channelEntry) =>
+            channelEntryMatchesFilter(
+              categoryName,
+              channelEntry,
+              normalizedFilterQuery,
+              guideChannelTitleLookup,
+            ),
+          );
+          const categoryMatches = normalizeFilterQuery(categoryName).includes(normalizedFilterQuery);
+
+          if (!categoryMatches && visibleChannelEntries.length === 0) {
+            return [];
+          }
+
+          return [
+            {
+              categoryName,
+              channelEntries,
+              visibleChannelEntries,
+            },
+          ];
+        });
+
+  if (filteredEntries.length === 0) {
+    const emptyState = document.createElement("div");
+    emptyState.className = "empty-state";
+    emptyState.textContent = `No categories or channels match "${state.filterQuery.trim()}".`;
+    elements.categoriesContainer.replaceChildren(emptyState);
     return;
   }
 
   elements.categoriesContainer.replaceChildren(
-    ...entries.map(([categoryName, channelEntries]) => {
+    ...filteredEntries.map(({ categoryName, channelEntries, visibleChannelEntries }) => {
       const card = document.createElement("article");
       card.className = "category-card";
-      const collapsed = isCategoryCollapsed(categoryName);
+      const collapsed = normalizedFilterQuery.length > 0 ? false : isCategoryCollapsed(categoryName);
       card.classList.toggle("collapsed", collapsed);
 
       const guideCategory = state.guide.categories?.[categoryName];
@@ -429,6 +540,10 @@ function renderCategories() {
       toggleButton.type = "button";
       toggleButton.className = "category-card-toggle";
       toggleButton.setAttribute("aria-expanded", String(!collapsed));
+      if (normalizedFilterQuery.length > 0) {
+        toggleButton.setAttribute("aria-disabled", "true");
+        toggleButton.title = "Clear the global filter to collapse this category.";
+      }
 
       const toggleButtonLabel = document.createElement("div");
       toggleButtonLabel.className = "category-card-heading";
@@ -438,7 +553,10 @@ function renderCategories() {
 
       const meta = document.createElement("p");
       meta.className = "category-meta";
-      meta.textContent = `${channelEntries.length} channel${channelEntries.length === 1 ? "" : "s"} · ${cachedVideoCount} cached video${cachedVideoCount === 1 ? "" : "s"}`;
+      meta.textContent =
+        normalizedFilterQuery.length > 0
+          ? `${visibleChannelEntries.length} matching channel${visibleChannelEntries.length === 1 ? "" : "s"} of ${channelEntries.length} · ${cachedVideoCount} cached video${cachedVideoCount === 1 ? "" : "s"}`
+          : `${channelEntries.length} channel${channelEntries.length === 1 ? "" : "s"} · ${cachedVideoCount} cached video${cachedVideoCount === 1 ? "" : "s"}`;
 
       const toggleIcon = document.createElement("span");
       toggleIcon.className = "category-card-toggle-icon";
@@ -448,6 +566,10 @@ function renderCategories() {
       toggleButtonLabel.append(title, meta);
       toggleButton.append(toggleButtonLabel, toggleIcon);
       toggleButton.addEventListener("click", () => {
+        if (normalizedFilterQuery.length > 0) {
+          return;
+        }
+
         setCategoryCollapsed(categoryName, !isCategoryCollapsed(categoryName));
         render();
       });
@@ -465,13 +587,16 @@ function renderCategories() {
       list.className = "channel-list";
       list.hidden = collapsed;
 
-      if (channelEntries.length === 0) {
+      if (visibleChannelEntries.length === 0) {
         const emptyNote = document.createElement("p");
         emptyNote.className = "category-empty-note";
-        emptyNote.textContent = "No channels in this category yet.";
+        emptyNote.textContent =
+          normalizedFilterQuery.length > 0
+            ? "No channels in this category match the current filter."
+            : "No channels in this category yet.";
         list.append(emptyNote);
       } else {
-        channelEntries.forEach((channelEntry) => {
+        visibleChannelEntries.forEach((channelEntry) => {
           const pill = document.createElement("div");
           pill.className = "channel-pill";
 
@@ -515,6 +640,7 @@ function renderCategories() {
 
 function render() {
   pruneCollapsedCategories();
+  syncGuideFilterControls();
   renderStats();
   renderCategories();
   syncToggleAllCategoriesButton();
@@ -817,6 +943,17 @@ async function loadDashboard() {
 elements.categoryForm.addEventListener("submit", (event) => {
   event.preventDefault();
   addCategoryToConfig(elements.newCategoryName.value);
+});
+
+elements.globalFilterInput.addEventListener("input", (event) => {
+  state.filterQuery = event.target.value;
+  render();
+});
+
+elements.clearGlobalFilterButton.addEventListener("click", () => {
+  state.filterQuery = "";
+  render();
+  elements.globalFilterInput.focus();
 });
 
 // ── Channel preview (per-category inline) ───────────────────────────────────
