@@ -375,29 +375,33 @@ body {
 .channel-pill {
   display: flex;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem;
   align-items: center;
   background: rgba(12, 20, 34, 0.85);
   border: 1px solid rgba(181, 192, 219, 0.1);
   border-radius: 16px;
-  padding: 0.75rem 0.85rem;
+  padding: 0.6rem 0.75rem;
 }
 
 .channel-pill-content {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.15rem;
+  flex: 1;
   min-width: 0;
 }
 
-.channel-pill code {
-  color: var(--accent);
-  word-break: break-all;
+.channel-pill-name {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-word;
 }
 
 .channel-pill-meta {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   word-break: break-all;
 }
 
@@ -416,6 +420,47 @@ body {
   background: rgba(252, 165, 165, 0.08);
   border: 1px solid rgba(252, 165, 165, 0.18);
   white-space: nowrap;
+}
+
+.delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--danger);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.92);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.channel-pill:hover .delete-button,
+.channel-pill:focus-within .delete-button,
+.delete-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.delete-button:hover,
+.delete-button:focus-visible {
+  background: rgba(252, 165, 165, 0.12);
+}
+
+@media (hover: none) {
+  .delete-button {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+  }
 }
 
 .category-empty-note {
