@@ -7,6 +7,8 @@
   --text-muted: #b5c0db;
   --accent: #7dd3fc;
   --accent-strong: #60a5fa;
+  --accent-neon: #39f3c7;
+  --accent-neon-strong: #1dd6aa;
   --danger: #fca5a5;
   --success: #86efac;
   --shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
@@ -45,6 +47,7 @@ body {
 .hero {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 2rem;
   padding: 2rem;
   margin-bottom: 1.5rem;
@@ -73,8 +76,8 @@ body {
 .hero-actions {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.6rem;
+  align-items: flex-end;
+  gap: 0.75rem;
   flex-shrink: 0;
 }
 
@@ -87,7 +90,11 @@ body {
   color: var(--text-main);
   background: rgba(125, 211, 252, 0.12);
   padding: 0.9rem 1.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font: inherit;
+  line-height: 1.2;
   cursor: pointer;
   text-decoration: none;
   transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
@@ -100,6 +107,114 @@ body {
   transform: translateY(-1px);
   background: rgba(125, 211, 252, 0.2);
   border-color: rgba(125, 211, 252, 0.45);
+}
+
+.hero-primary-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3.2rem;
+  padding: 1rem 1.35rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-neon) 45%, transparent);
+  color: #041019;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-neon) 96%, white 4%),
+      color-mix(in srgb, var(--accent-neon-strong) 72%, var(--accent-strong) 28%)
+    );
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent-neon) 14%, transparent),
+    0 18px 36px rgba(14, 119, 102, 0.28);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    filter 150ms ease;
+}
+
+.hero-primary-link:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.08);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent-neon) 20%, transparent),
+    0 22px 38px rgba(14, 119, 102, 0.34);
+}
+
+.hero-primary-link:focus-visible,
+.secondary-link:focus-visible,
+.settings-menu-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-neon) 65%, transparent);
+  outline-offset: 2px;
+}
+
+.settings-menu {
+  position: relative;
+}
+
+.settings-menu-trigger {
+  list-style: none;
+  user-select: none;
+  gap: 0.55rem;
+}
+
+.settings-menu-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.settings-menu-trigger::marker {
+  content: "";
+}
+
+.settings-menu-trigger::after {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 150ms ease;
+}
+
+.settings-menu[open] .settings-menu-trigger::after {
+  transform: rotate(225deg) translateY(-1px);
+}
+
+.settings-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  min-width: 15rem;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.3rem;
+  background: rgba(10, 21, 38, 0.96);
+  border: 1px solid rgba(133, 169, 255, 0.22);
+  border-radius: 18px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(16px);
+  z-index: 10;
+}
+
+.settings-menu-link {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 0.8rem 0.95rem;
+  color: var(--text-main);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.settings-menu-link:hover {
+  background: rgba(125, 211, 252, 0.12);
 }
 
 .panel {
@@ -536,6 +651,27 @@ button:disabled {
   .panel-heading-split {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .hero-actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .hero-primary-link,
+  .settings-menu {
+    width: 100%;
+  }
+
+  .settings-menu-trigger {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .settings-menu-panel {
+    position: static;
+    margin-top: 0.55rem;
+    min-width: 0;
   }
 
   .category-form {
