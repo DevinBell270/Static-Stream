@@ -459,10 +459,9 @@ function render() {
     const cat = state.focusInlineAddAfterRender;
     state.focusInlineAddAfterRender = null;
     queueMicrotask(() => {
-      const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(cat) : cat.replace(/"/g, '\\"');
-      const form = document.querySelector(`.category-inline-add-form[data-category="${escaped}"]`);
-      const input = form?.querySelector(".inline-add-handle");
-      input?.focus();
+      const forms = document.querySelectorAll(".category-inline-add-form");
+      const form = Array.from(forms).find((el) => el.dataset.category === cat);
+      form?.querySelector(".inline-add-handle")?.focus();
     });
   }
 }
