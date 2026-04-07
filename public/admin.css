@@ -180,6 +180,52 @@ body {
   display: block;
 }
 
+.guide-filter-bar {
+  position: sticky;
+  top: 0.75rem;
+  z-index: 2;
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(181, 192, 219, 0.14);
+  border-radius: 18px;
+  background: rgba(9, 17, 29, 0.92);
+  backdrop-filter: blur(16px);
+}
+
+.guide-filter-field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.45rem;
+  color: var(--text-muted);
+}
+
+.guide-filter-field input {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(181, 192, 219, 0.2);
+  background: rgba(5, 10, 18, 0.5);
+  color: var(--text-main);
+  padding: 0.95rem 1rem;
+  font: inherit;
+}
+
+.guide-filter-field input:focus {
+  outline: 2px solid rgba(125, 211, 252, 0.45);
+  outline-offset: 1px;
+}
+
+.guide-filter-clear[hidden] {
+  display: none;
+}
+
+.guide-filter-clear {
+  padding-inline: 1rem;
+}
+
 .status-banner.success {
   background: rgba(134, 239, 172, 0.12);
   border-color: rgba(134, 239, 172, 0.28);
@@ -257,6 +303,10 @@ body {
   text-align: left;
   font: inherit;
   cursor: pointer;
+}
+
+.category-card-toggle[aria-disabled="true"] {
+  cursor: default;
 }
 
 .category-card-toggle:focus-visible {
@@ -447,6 +497,12 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .guide-filter-bar {
+    top: 0.5rem;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .inline-add-row {
     flex-direction: column;
     align-items: stretch;
@@ -473,6 +529,10 @@ button:disabled {
   }
 
   #toggle-all-categories-button {
+    width: 100%;
+  }
+
+  .guide-filter-clear {
     width: 100%;
   }
 }
