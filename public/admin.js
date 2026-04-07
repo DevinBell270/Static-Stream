@@ -6,19 +6,19 @@ const state = {
   refreshingCategories: new Set(), // category names currently being refreshed
   nextScheduledRefreshAt: null,
   refreshIntervalHours: null,
+  /** After adding a channel, focus this category's inline input on next paint. */
+  focusInlineAddAfterRender: null,
 };
 
 let nextRefreshCountdownIntervalId = null;
 
+/** @type {Map<string, ReturnType<typeof setTimeout>>} */
+const previewTimersByCategory = new Map();
+
 const elements = {
   categoryForm: document.querySelector("#category-form"),
   newCategoryName: document.querySelector("#new-category-name"),
-  form: document.querySelector("#channel-form"),
-  categoryName: document.querySelector("#category-name"),
-  channelInput: document.querySelector("#channel-id"),
-  channelPreview: document.querySelector("#channel-preview"),
   addCategoryButton: document.querySelector("#add-category-button"),
-  addChannelButton: document.querySelector("#add-channel-button"),
   saveButton: document.querySelector("#save-config-button"),
   categoriesContainer: document.querySelector("#categories-container"),
   statsStrip: document.querySelector("#stats-strip"),
@@ -45,11 +45,23 @@ function clearStatus() {
   elements.statusBanner.textContent = "";
 }
 
+function syncInlineAddControls() {
+  document.querySelectorAll(".category-inline-add-form").forEach((form) => {
+    const input = form.querySelector(".inline-add-handle");
+    const button = form.querySelector(".inline-add-button");
+    if (input) {
+      input.disabled = state.isSaving;
+    }
+    if (button) {
+      button.disabled = state.isSaving;
+    }
+  });
+}
+
 function setSaving(isSaving) {
   state.isSaving = isSaving;
   elements.saveButton.disabled = isSaving;
   elements.addCategoryButton.disabled = isSaving;
-  elements.addChannelButton.disabled = isSaving;
   elements.saveButton.textContent = isSaving ? "Refreshing YouTube Cache..." : "Save Changes";
 
   // Disable all per-category refresh buttons while a global save is running.
@@ -57,7 +69,7 @@ function setSaving(isSaving) {
     btn.disabled = isSaving || state.refreshingCategories.has(btn.dataset.category);
   });
 
-  syncChannelFormState();
+  syncInlineAddControls();
 }
 
 function getCategoryEntries() {
@@ -66,10 +78,11 @@ function getCategoryEntries() {
   );
 }
 
-function getSelectedCategoryName() {
-  return elements.categoryName.value;
-}
-
+/**
+ * Handle-only: leading @ and at least one character after @.
+ * @param {string} channelValue
+ * @returns {{ handle: string } | null}
+ */
 function normalizeChannelInput(channelValue) {
   const trimmedChannel = channelValue.trim();
 
@@ -77,9 +90,11 @@ function normalizeChannelInput(channelValue) {
     return null;
   }
 
-  return trimmedChannel.startsWith("@")
-    ? { handle: trimmedChannel }
-    : { channelId: trimmedChannel };
+  if (!trimmedChannel.startsWith("@") || trimmedChannel.length < 2) {
+    return null;
+  }
+
+  return { handle: trimmedChannel };
 }
 
 function getChannelEntryKeys(channelEntry) {
@@ -111,17 +126,6 @@ function getChannelSecondaryLabel(channelEntry) {
   }
 
   return "";
-}
-
-function setSelectedCategoryName(categoryName) {
-  elements.categoryName.value = categoryName;
-}
-
-function syncChannelFormState() {
-  const hasCategories = getCategoryEntries().length > 0;
-  elements.categoryName.disabled = state.isSaving || !hasCategories;
-  elements.channelInput.disabled = state.isSaving || !hasCategories;
-  elements.addChannelButton.disabled = state.isSaving || !hasCategories;
 }
 
 function clearNextRefreshCountdown() {
@@ -173,38 +177,6 @@ window.addEventListener("beforeunload", () => {
   clearNextRefreshCountdown();
 });
 
-function renderCategoryOptions() {
-  const selectedCategoryName = getSelectedCategoryName();
-  const entries = getCategoryEntries();
-
-  elements.categoryName.replaceChildren();
-
-  if (entries.length === 0) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "Create a category first";
-    elements.categoryName.append(option);
-    setSelectedCategoryName("");
-    syncChannelFormState();
-    return;
-  }
-
-  entries.forEach(([categoryName]) => {
-    const option = document.createElement("option");
-    option.value = categoryName;
-    option.textContent = categoryName;
-    elements.categoryName.append(option);
-  });
-
-  const categoryNames = entries.map(([categoryName]) => categoryName);
-  const nextSelectedCategory = categoryNames.includes(selectedCategoryName)
-    ? selectedCategoryName
-    : categoryNames[0];
-
-  setSelectedCategoryName(nextSelectedCategory);
-  syncChannelFormState();
-}
-
 function addCategoryToConfig(categoryName) {
   const trimmedCategory = categoryName.trim();
 
@@ -223,9 +195,8 @@ function addCategoryToConfig(categoryName) {
   nextConfig.categories[trimmedCategory] = [];
   state.config = nextConfig;
   elements.categoryForm.reset();
+  state.focusInlineAddAfterRender = trimmedCategory;
   render();
-  setSelectedCategoryName(trimmedCategory);
-  syncChannelFormState();
   setStatus("Category created locally. Save changes when you're ready.");
 }
 
@@ -233,6 +204,7 @@ function deleteCategoryFromConfig(categoryName) {
   const nextConfig = cloneConfig();
   delete nextConfig.categories[categoryName];
   state.config = nextConfig;
+  previewTimersByCategory.delete(categoryName);
   render();
   setStatus("Category removed locally. Save changes when you're ready.");
 }
@@ -323,12 +295,82 @@ function buildDeleteButton(categoryName, channelEntry) {
   return button;
 }
 
+/**
+ * Inline add row + preview for one category.
+ * @param {string} categoryName
+ */
+function buildInlineAddForm(categoryName) {
+  const wrap = document.createElement("div");
+  wrap.className = "inline-add-wrap";
+
+  const form = document.createElement("form");
+  form.className = "category-inline-add-form";
+  form.dataset.category = categoryName;
+
+  const row = document.createElement("div");
+  row.className = "inline-add-row";
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "inline-add-handle";
+  input.name = "channelHandle";
+  input.placeholder = "@youtubehandle";
+  input.autocomplete = "off";
+  input.setAttribute("aria-label", `Add channel to ${categoryName}`);
+  input.disabled = state.isSaving;
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "submit";
+  submitBtn.className = "inline-add-button";
+  submitBtn.textContent = "+ Add";
+  submitBtn.disabled = state.isSaving;
+
+  const preview = document.createElement("div");
+  preview.className = "inline-add-preview channel-preview";
+  preview.setAttribute("aria-live", "polite");
+
+  row.append(input, submitBtn);
+  form.append(row, preview);
+  wrap.append(form);
+
+  input.addEventListener("input", () => {
+    schedulePreviewForCategory(categoryName, input.value, preview);
+  });
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const existingTimer = previewTimersByCategory.get(categoryName);
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer);
+      previewTimersByCategory.delete(categoryName);
+    }
+    clearChannelPreview(preview);
+
+    const added = addChannelToConfig(categoryName, input.value, { skipRender: true });
+    if (!added) {
+      return;
+    }
+
+    input.value = "";
+    state.focusInlineAddAfterRender = categoryName;
+    render();
+    setStatus("Channel added locally. Save changes to rebuild the cached guide.");
+  });
+
+  return wrap;
+}
+
 function renderCategories() {
+  for (const timerId of previewTimersByCategory.values()) {
+    clearTimeout(timerId);
+  }
+  previewTimersByCategory.clear();
+
   const entries = getCategoryEntries();
 
   if (entries.length === 0) {
     elements.categoriesContainer.innerHTML =
-      '<div class="empty-state">No categories yet. Add a category and channel above to start building your guide.</div>';
+      '<div class="empty-state">No categories yet. Create a category above, then add YouTube handles in each category card below.</div>';
     return;
   }
 
@@ -400,6 +442,8 @@ function renderCategories() {
         list.append(errorNote);
       }
 
+      list.append(buildInlineAddForm(categoryName));
+
       card.append(header, list);
       return card;
     }),
@@ -407,18 +451,52 @@ function renderCategories() {
 }
 
 function render() {
-  renderCategoryOptions();
   renderStats();
   renderCategories();
+  syncInlineAddControls();
+
+  if (state.focusInlineAddAfterRender) {
+    const cat = state.focusInlineAddAfterRender;
+    state.focusInlineAddAfterRender = null;
+    queueMicrotask(() => {
+      const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(cat) : cat.replace(/"/g, '\\"');
+      const form = document.querySelector(`.category-inline-add-form[data-category="${escaped}"]`);
+      const input = form?.querySelector(".inline-add-handle");
+      input?.focus();
+    });
+  }
 }
 
-function addChannelToConfig(categoryName, channelValue) {
+/**
+ * @param {string} categoryName
+ * @param {string} channelValue
+ * @param {{ skipRender?: boolean }} [options]
+ * @returns {boolean} true if the channel was added
+ */
+function addChannelToConfig(categoryName, channelValue, options = {}) {
+  const { skipRender = false } = options;
   const trimmedCategory = categoryName.trim();
+  const trimmedValue = channelValue.trim();
   const nextChannelEntry = normalizeChannelInput(channelValue);
 
-  if (!trimmedCategory || !nextChannelEntry) {
-    setStatus("Enter both a category name and a YouTube handle.", "error");
-    return;
+  if (!trimmedCategory) {
+    setStatus("Could not determine category for this channel.", "error");
+    return false;
+  }
+
+  if (!trimmedValue) {
+    setStatus("Enter a YouTube handle starting with @.", "error");
+    return false;
+  }
+
+  if (!trimmedValue.startsWith("@")) {
+    setStatus("Handles must start with @ (e.g. @yourchannel).", "error");
+    return false;
+  }
+
+  if (!nextChannelEntry) {
+    setStatus("Enter a valid YouTube handle starting with @.", "error");
+    return false;
   }
 
   const nextConfig = cloneConfig();
@@ -426,15 +504,18 @@ function addChannelToConfig(categoryName, channelValue) {
 
   if (existingChannelEntries.some((channelEntry) => channelEntriesMatch(channelEntry, nextChannelEntry))) {
     setStatus("That channel already exists in this category.", "error");
-    return;
+    return false;
   }
 
   nextConfig.categories[trimmedCategory] = [...existingChannelEntries, nextChannelEntry];
   state.config = nextConfig;
-  elements.form.reset();
-  render();
-  setSelectedCategoryName(trimmedCategory);
-  setStatus("Channel added locally. Save changes to rebuild the cached guide.");
+
+  if (!skipRender) {
+    render();
+    setStatus("Channel added locally. Save changes to rebuild the cached guide.");
+  }
+
+  return true;
 }
 
 const CSRF_EXPIRED_MESSAGE =
@@ -674,15 +755,15 @@ elements.categoryForm.addEventListener("submit", (event) => {
   addCategoryToConfig(elements.newCategoryName.value);
 });
 
-// ── Channel preview ──────────────────────────────────────────────────────────
+// ── Channel preview (per-category inline) ───────────────────────────────────
 
-/** Clears the preview pane without animation. */
-function clearChannelPreview() {
-  elements.channelPreview.replaceChildren();
+/** @param {HTMLElement} container */
+function clearChannelPreview(container) {
+  container.replaceChildren();
 }
 
-/** Renders a loading spinner while the API call is in flight. */
-function showPreviewLoading() {
+/** @param {HTMLElement} container */
+function showPreviewLoading(container) {
   const card = document.createElement("div");
   card.className = "channel-preview-card loading";
 
@@ -698,11 +779,11 @@ function showPreviewLoading() {
   info.append(title);
 
   card.append(spinner, info);
-  elements.channelPreview.replaceChildren(card);
+  container.replaceChildren(card);
 }
 
-/** Renders the resolved channel card with avatar + name. */
-function showPreviewResult(data) {
+/** @param {HTMLElement} container */
+function showPreviewResult(data, container) {
   const card = document.createElement("div");
   card.className = "channel-preview-card";
 
@@ -737,11 +818,11 @@ function showPreviewResult(data) {
   }
 
   card.append(info);
-  elements.channelPreview.replaceChildren(card);
+  container.replaceChildren(card);
 }
 
-/** Renders an error chip below the input. */
-function showPreviewError(message) {
+/** @param {HTMLElement} container */
+function showPreviewError(message, container) {
   const card = document.createElement("div");
   card.className = "channel-preview-card error";
 
@@ -750,33 +831,39 @@ function showPreviewError(message) {
   errorText.textContent = message;
   card.append(errorText);
 
-  elements.channelPreview.replaceChildren(card);
+  container.replaceChildren(card);
 }
 
 /**
- * Debounced handler: fires a preview API call 600 ms after the user stops
- * typing a string that looks like a YouTube handle.
+ * Debounced: preview API 600ms after typing stops, for one category's preview pane.
+ * @param {string} categoryName
+ * @param {string} rawValue
+ * @param {HTMLElement} previewContainer
  */
-let previewTimer = null;
+function schedulePreviewForCategory(categoryName, rawValue, previewContainer) {
+  const prev = previewTimersByCategory.get(categoryName);
+  if (prev !== undefined) {
+    clearTimeout(prev);
+  }
 
-function schedulePreview(rawValue) {
-  clearTimeout(previewTimer);
   const handle = rawValue.trim();
 
   if (!handle) {
-    clearChannelPreview();
+    clearChannelPreview(previewContainer);
+    previewTimersByCategory.delete(categoryName);
     return;
   }
 
-  // Require the leading "@" before hitting the network.
   if (!handle.startsWith("@") || handle.length < 2) {
-    clearChannelPreview();
+    clearChannelPreview(previewContainer);
+    previewTimersByCategory.delete(categoryName);
     return;
   }
 
-  showPreviewLoading();
+  showPreviewLoading(previewContainer);
 
-  previewTimer = setTimeout(async () => {
+  const timerId = setTimeout(async () => {
+    previewTimersByCategory.delete(categoryName);
     try {
       const response = await fetch(
         `/api/channel-preview?handle=${encodeURIComponent(handle)}`,
@@ -784,27 +871,18 @@ function schedulePreview(rawValue) {
       const payload = await response.json();
 
       if (!response.ok) {
-        showPreviewError(payload.error || "Channel not found.");
+        showPreviewError(payload.error || "Channel not found.", previewContainer);
         return;
       }
 
-      showPreviewResult(payload);
+      showPreviewResult(payload, previewContainer);
     } catch {
-      showPreviewError("Could not reach the server. Check your connection.");
+      showPreviewError("Could not reach the server. Check your connection.", previewContainer);
     }
   }, 600);
+
+  previewTimersByCategory.set(categoryName, timerId);
 }
-
-elements.channelInput.addEventListener("input", (event) => {
-  schedulePreview(event.target.value);
-});
-
-elements.form.addEventListener("submit", (event) => {
-  event.preventDefault();
-  clearTimeout(previewTimer);
-  clearChannelPreview();
-  addChannelToConfig(elements.categoryName.value, elements.channelInput.value);
-});
 
 elements.saveButton.addEventListener("click", () => {
   saveConfig();
