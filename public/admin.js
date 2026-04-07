@@ -22,12 +22,14 @@ const elements = {
   newCategoryName: document.querySelector("#new-category-name"),
   addCategoryButton: document.querySelector("#add-category-button"),
   saveButton: document.querySelector("#save-config-button"),
+  settingsMenu: document.querySelector("#settings-menu"),
   toggleAllCategoriesButton: document.querySelector("#toggle-all-categories-button"),
   globalFilterInput: document.querySelector("#global-channel-filter"),
   clearGlobalFilterButton: document.querySelector("#clear-global-filter-button"),
   categoriesContainer: document.querySelector("#categories-container"),
   statsStrip: document.querySelector("#stats-strip"),
   statusBanner: document.querySelector("#status-banner"),
+  exportButton: document.querySelector("#export-config-button"),
   importButton: document.querySelector("#import-config-button"),
   importInput: document.querySelector("#import-config-input"),
 };
@@ -48,6 +50,12 @@ function setStatus(message, variant = "") {
 function clearStatus() {
   elements.statusBanner.className = "status-banner";
   elements.statusBanner.textContent = "";
+}
+
+function closeSettingsMenu() {
+  if (elements.settingsMenu) {
+    elements.settingsMenu.open = false;
+  }
 }
 
 function syncInlineAddControls() {
@@ -1099,6 +1107,33 @@ elements.toggleAllCategoriesButton.addEventListener("click", () => {
   render();
 });
 
+if (elements.settingsMenu) {
+  document.addEventListener("click", (event) => {
+    if (!elements.settingsMenu.open || !(event.target instanceof Node)) {
+      return;
+    }
+
+    if (!elements.settingsMenu.contains(event.target)) {
+      closeSettingsMenu();
+    }
+  });
+
+  elements.settingsMenu.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    closeSettingsMenu();
+    elements.settingsMenu.querySelector("summary")?.focus();
+  });
+}
+
+if (elements.exportButton) {
+  elements.exportButton.addEventListener("click", () => {
+    closeSettingsMenu();
+  });
+}
+
 // ── Import / Export ──────────────────────────────────────────────────────────
 
 /**
@@ -1107,6 +1142,7 @@ elements.toggleAllCategoriesButton.addEventListener("click", () => {
 elements.importButton.addEventListener("click", () => {
   elements.importInput.value = "";
   elements.importInput.click();
+  closeSettingsMenu();
 });
 
 /**

@@ -18,9 +18,23 @@
           </p>
         </div>
         <div class="hero-actions">
-          <a class="secondary-link" href="/tv.html">Open TV Experience</a>
-          <a id="export-config-button" class="secondary-link" href="/api/config/export" download="config.json">Export config.json</a>
-          <button id="import-config-button" class="secondary-link" type="button">Import config.json</button>
+          <a class="hero-primary-link" href="/tv.html">Open TV Experience</a>
+          <details id="settings-menu" class="settings-menu">
+            <summary class="secondary-link settings-menu-trigger">Settings</summary>
+            <div class="settings-menu-panel">
+              <a
+                id="export-config-button"
+                class="settings-menu-link"
+                href="/api/config/export"
+                download="config.json"
+              >
+                Export config.json
+              </a>
+              <button id="import-config-button" class="settings-menu-link" type="button">
+                Import config.json
+              </button>
+            </div>
+          </details>
           <input id="import-config-input" class="file-input-hidden" type="file" accept=".json,application/json" />
         </div>
       </header>
