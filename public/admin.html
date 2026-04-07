@@ -28,7 +28,7 @@
       <section class="panel form-panel">
         <div class="panel-heading">
           <h2>Create a Category</h2>
-          <p>Add a category first, then assign channels to it from the dropdown below.</p>
+          <p>Add a category first, then add YouTube handles in each category card below.</p>
         </div>
 
         <form id="category-form" class="category-form">
@@ -44,36 +44,6 @@
           </label>
 
           <button id="add-category-button" type="submit">Create Category</button>
-        </form>
-      </section>
-
-      <section class="panel form-panel">
-        <div class="panel-heading">
-          <h2>Add a Channel</h2>
-          <p>Select an existing category, then add a YouTube handle like <code>@yourchannel</code>.</p>
-        </div>
-
-        <form id="channel-form" class="channel-form">
-          <label>
-            <span>Category</span>
-            <select id="category-name" name="category" required></select>
-          </label>
-
-          <div class="channel-input-group">
-            <label>
-              <span>YouTube Handle</span>
-              <input
-                id="channel-id"
-                type="text"
-                name="channelHandle"
-                placeholder="@yourchannel"
-                required
-              />
-            </label>
-            <div id="channel-preview" class="channel-preview" aria-live="polite"></div>
-          </div>
-
-          <button id="add-channel-button" type="submit">Add Channel</button>
         </form>
       </section>
 
