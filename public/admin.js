@@ -4,6 +4,7 @@ const state = {
   csrfToken: null,
   isSaving: false,
   refreshingCategories: new Set(), // category names currently being refreshed
+  collapsedCategories: new Set(),
   nextScheduledRefreshAt: null,
   refreshIntervalHours: null,
   /** After adding a channel, focus this category's inline input on next paint. */
@@ -20,6 +21,7 @@ const elements = {
   newCategoryName: document.querySelector("#new-category-name"),
   addCategoryButton: document.querySelector("#add-category-button"),
   saveButton: document.querySelector("#save-config-button"),
+  toggleAllCategoriesButton: document.querySelector("#toggle-all-categories-button"),
   categoriesContainer: document.querySelector("#categories-container"),
   statsStrip: document.querySelector("#stats-strip"),
   statusBanner: document.querySelector("#status-banner"),
@@ -76,6 +78,41 @@ function getCategoryEntries() {
   return Object.entries(state.config.categories).sort((left, right) =>
     left[0].localeCompare(right[0]),
   );
+}
+
+function isCategoryCollapsed(categoryName) {
+  return state.collapsedCategories.has(categoryName);
+}
+
+function setCategoryCollapsed(categoryName, collapsed) {
+  if (collapsed) {
+    state.collapsedCategories.add(categoryName);
+  } else {
+    state.collapsedCategories.delete(categoryName);
+  }
+}
+
+function areAllCategoriesCollapsed() {
+  const entries = getCategoryEntries();
+  return entries.length > 0 && entries.every(([categoryName]) => isCategoryCollapsed(categoryName));
+}
+
+function pruneCollapsedCategories() {
+  const currentCategories = new Set(getCategoryEntries().map(([categoryName]) => categoryName));
+
+  for (const categoryName of state.collapsedCategories) {
+    if (!currentCategories.has(categoryName)) {
+      state.collapsedCategories.delete(categoryName);
+    }
+  }
+}
+
+function syncToggleAllCategoriesButton() {
+  const entries = getCategoryEntries();
+  const hasCategories = entries.length > 0;
+  elements.toggleAllCategoriesButton.disabled = !hasCategories;
+  elements.toggleAllCategoriesButton.textContent =
+    hasCategories && areAllCategoriesCollapsed() ? "Expand All" : "Collapse All";
 }
 
 /**
@@ -194,6 +231,7 @@ function addCategoryToConfig(categoryName) {
 
   nextConfig.categories[trimmedCategory] = [];
   state.config = nextConfig;
+  state.collapsedCategories.delete(trimmedCategory);
   elements.categoryForm.reset();
   state.focusInlineAddAfterRender = trimmedCategory;
   render();
@@ -205,6 +243,7 @@ function deleteCategoryFromConfig(categoryName) {
   delete nextConfig.categories[categoryName];
   state.config = nextConfig;
   previewTimersByCategory.delete(categoryName);
+  state.collapsedCategories.delete(categoryName);
   render();
   setStatus("Category removed locally. Save changes when you're ready.");
 }
@@ -378,18 +417,41 @@ function renderCategories() {
     ...entries.map(([categoryName, channelEntries]) => {
       const card = document.createElement("article");
       card.className = "category-card";
+      const collapsed = isCategoryCollapsed(categoryName);
+      card.classList.toggle("collapsed", collapsed);
 
       const guideCategory = state.guide.categories?.[categoryName];
       const cachedVideoCount = guideCategory?.videos?.length || 0;
 
       const header = document.createElement("div");
       header.className = "category-card-header";
-      header.innerHTML = `
-        <div>
-          <h3>${categoryName}</h3>
-          <p class="category-meta">${channelEntries.length} channel${channelEntries.length === 1 ? "" : "s"} · ${cachedVideoCount} cached video${cachedVideoCount === 1 ? "" : "s"}</p>
-        </div>
-      `;
+      const toggleButton = document.createElement("button");
+      toggleButton.type = "button";
+      toggleButton.className = "category-card-toggle";
+      toggleButton.setAttribute("aria-expanded", String(!collapsed));
+
+      const toggleButtonLabel = document.createElement("div");
+      toggleButtonLabel.className = "category-card-heading";
+
+      const title = document.createElement("h3");
+      title.textContent = categoryName;
+
+      const meta = document.createElement("p");
+      meta.className = "category-meta";
+      meta.textContent = `${channelEntries.length} channel${channelEntries.length === 1 ? "" : "s"} · ${cachedVideoCount} cached video${cachedVideoCount === 1 ? "" : "s"}`;
+
+      const toggleIcon = document.createElement("span");
+      toggleIcon.className = "category-card-toggle-icon";
+      toggleIcon.textContent = "▾";
+      toggleIcon.setAttribute("aria-hidden", "true");
+
+      toggleButtonLabel.append(title, meta);
+      toggleButton.append(toggleButtonLabel, toggleIcon);
+      toggleButton.addEventListener("click", () => {
+        setCategoryCollapsed(categoryName, !isCategoryCollapsed(categoryName));
+        render();
+      });
+      header.append(toggleButton);
 
       const headerActions = document.createElement("div");
       headerActions.className = "category-card-actions";
@@ -401,6 +463,7 @@ function renderCategories() {
 
       const list = document.createElement("div");
       list.className = "channel-list";
+      list.hidden = collapsed;
 
       if (channelEntries.length === 0) {
         const emptyNote = document.createElement("p");
@@ -451,8 +514,10 @@ function renderCategories() {
 }
 
 function render() {
+  pruneCollapsedCategories();
   renderStats();
   renderCategories();
+  syncToggleAllCategoriesButton();
   syncInlineAddControls();
 
   if (state.focusInlineAddAfterRender) {
@@ -885,6 +950,16 @@ function schedulePreviewForCategory(categoryName, rawValue, previewContainer) {
 
 elements.saveButton.addEventListener("click", () => {
   saveConfig();
+});
+
+elements.toggleAllCategoriesButton.addEventListener("click", () => {
+  const collapseAll = !areAllCategoriesCollapsed();
+
+  getCategoryEntries().forEach(([categoryName]) => {
+    setCategoryCollapsed(categoryName, collapseAll);
+  });
+
+  render();
 });
 
 // ── Import / Export ──────────────────────────────────────────────────────────
