@@ -64,6 +64,7 @@ const state = {
   scheduleWidthPx: 0,
   hasCenteredOnNow: false,
   hasUserSelectedChannel: false,
+  programmaticScroll: false,
   sponsorSegments: [],
   skippedSegmentIds: new Set(),
   sponsorCheckTimer: null,
@@ -476,16 +477,17 @@ function centerScheduleOnNow() {
   }
 
   const labelWidth = document.querySelector(".timebar-label")?.offsetWidth || 0;
-  const viewportTimelineWidth = Math.max(elements.guideGrid.clientWidth - labelWidth, 0);
   const currentTimePx = getPixelsFromWindowStart(Date.now());
   const desiredOffsetPx = 0;
   const maxScrollLeft = Math.max((labelWidth + state.scheduleWidthPx) - elements.guideGrid.clientWidth, 0);
   const targetScrollLeft = Math.min(Math.max(currentTimePx - desiredOffsetPx, 0), maxScrollLeft);
 
+  state.programmaticScroll = true;
   elements.guideGrid.scrollLeft = targetScrollLeft;
   syncTimebarScroll();
   updatePlayheadPosition();
   state.hasCenteredOnNow = true;
+  state.programmaticScroll = false;
 }
 
 function renderSchedule({ centerOnNow = false } = {}) {
@@ -505,6 +507,8 @@ function renderSchedule({ centerOnNow = false } = {}) {
 
   renderTimebar();
   renderGrid(nowMs);
+
+  state.programmaticScroll = true;
   elements.guideGrid.scrollTop = previousScrollTop;
 
   if (centerOnNow) {
@@ -515,6 +519,7 @@ function renderSchedule({ centerOnNow = false } = {}) {
 
   syncTimebarScroll();
   updatePlayheadPosition();
+  state.programmaticScroll = false;
 }
 
 function shouldRebuildSchedule(nowMs = Date.now()) {
@@ -771,10 +776,15 @@ async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "f
       const rowRect = selectedRow.getBoundingClientRect();
       const gridRect = elements.guideGrid.getBoundingClientRect();
 
-      if (rowRect.top < gridRect.top) {
-        elements.guideGrid.scrollBy({ top: rowRect.top - gridRect.top, behavior: "smooth" });
-      } else if (rowRect.bottom > gridRect.bottom) {
-        elements.guideGrid.scrollBy({ top: rowRect.bottom - gridRect.bottom, behavior: "smooth" });
+      if (rowRect.top < gridRect.top || rowRect.bottom > gridRect.bottom) {
+        state.programmaticScroll = true;
+        elements.guideGrid.scrollBy({
+          top: rowRect.top < gridRect.top
+            ? rowRect.top - gridRect.top
+            : rowRect.bottom - gridRect.bottom,
+          behavior: "smooth",
+        });
+        window.setTimeout(() => { state.programmaticScroll = false; }, 350);
       }
     }
   }
@@ -830,7 +840,7 @@ function changeChannel(step, mode = "full") {
     return;
   }
 
-  tuneIntoCategory(nextRow.categoryName, { userInitiated: true, mode });
+  tuneIntoCategory(nextRow.categoryName, { mode });
 }
 
 function handleGuideClick(event) {
@@ -862,10 +872,15 @@ function scrollToFocusedRow() {
     const rowRect = rowElement.getBoundingClientRect();
     const gridRect = elements.guideGrid.getBoundingClientRect();
 
-    if (rowRect.top < gridRect.top) {
-      elements.guideGrid.scrollBy({ top: rowRect.top - gridRect.top, behavior: "smooth" });
-    } else if (rowRect.bottom > gridRect.bottom) {
-      elements.guideGrid.scrollBy({ top: rowRect.bottom - gridRect.bottom, behavior: "smooth" });
+    if (rowRect.top < gridRect.top || rowRect.bottom > gridRect.bottom) {
+      state.programmaticScroll = true;
+      elements.guideGrid.scrollBy({
+        top: rowRect.top < gridRect.top
+          ? rowRect.top - gridRect.top
+          : rowRect.bottom - gridRect.bottom,
+        behavior: "smooth",
+      });
+      window.setTimeout(() => { state.programmaticScroll = false; }, 350);
     }
   }
 }
@@ -874,14 +889,14 @@ function handleVerticalNav(step) {
   const isFullMode = elements.overlay.classList.contains("visible") && !elements.overlay.classList.contains("info-only");
 
   if (!isFullMode) {
-    showOverlay({ mode: "full" });
+    showOverlay({ persist: true, mode: "full" });
     state.focusedCategory = state.currentCategory;
     refreshSelectionStyles();
     window.setTimeout(scrollToFocusedRow, 10);
     return;
   }
 
-  showOverlay({ mode: "full" });
+  showOverlay({ persist: true, mode: "full" });
 
   const playableRows = getPlayableRows();
   if (!playableRows.length) return;
@@ -912,7 +927,9 @@ function initializeInteractions() {
 
   elements.guideGrid.addEventListener("click", handleGuideClick);
   elements.guideGrid.addEventListener("scroll", () => {
-    showOverlay({ mode: "full" });
+    if (!state.programmaticScroll) {
+      showOverlay({ mode: "full" });
+    }
     syncTimebarScroll();
     updatePlayheadPosition();
   });
@@ -930,12 +947,11 @@ function initializeInteractions() {
     }
 
     if (event.key === "Enter") {
+      event.preventDefault();
       const isFullMode = elements.overlay.classList.contains("visible") && !elements.overlay.classList.contains("info-only");
       if (isFullMode && state.focusedCategory && state.focusedCategory !== state.currentCategory) {
-        event.preventDefault();
-        tuneIntoCategory(state.focusedCategory, { userInitiated: true, mode: "full" });
-      } else if (isFullMode) {
-        event.preventDefault();
+        tuneIntoCategory(state.focusedCategory, { userInitiated: true, mode: "info" });
+      } else {
         showOverlay({ mode: "info" });
       }
       return;
@@ -963,6 +979,17 @@ function initializeInteractions() {
           state.player.mute();
           setStatus("Audio muted.");
         }
+      }
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      const isFullMode = elements.overlay.classList.contains("visible") && !elements.overlay.classList.contains("info-only");
+      if (isFullMode) {
+        showOverlay({ mode: "info" });
+      } else {
+        hideOverlay();
       }
       return;
     }
