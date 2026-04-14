@@ -6,6 +6,8 @@ const CHANNEL_NUMBER_START = 101;
 const LIVE_TICK_MS = 1000;
 const SCHEDULE_REBUILD_BUFFER_MINUTES = 60;
 const OVERLAY_HIDE_DELAY_MS = 2800;
+const SPONSOR_CHECK_MS = 1000;
+const SPONSORBLOCK_API = "https://sponsor.ajay.app";
 const STORAGE_KEY = "staticStreamCurrentCategory";
 
 function readSavedCategory() {
@@ -62,6 +64,9 @@ const state = {
   scheduleWidthPx: 0,
   hasCenteredOnNow: false,
   hasUserSelectedChannel: false,
+  sponsorSegments: [],
+  skippedSegmentIds: new Set(),
+  sponsorCheckTimer: null,
 };
 
 const elements = {
@@ -553,6 +558,59 @@ function startLiveUpdates() {
   state.liveTimer = window.setInterval(tickLiveState, LIVE_TICK_MS);
 }
 
+async function fetchSponsorSegments(videoId) {
+  state.sponsorSegments = [];
+  state.skippedSegmentIds = new Set();
+
+  try {
+    const url = `${SPONSORBLOCK_API}/api/skipSegments?videoID=${encodeURIComponent(videoId)}&categories=${encodeURIComponent(JSON.stringify(["sponsor"]))}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+
+    state.sponsorSegments = data
+      .filter((entry) => Array.isArray(entry.segment) && entry.segment.length === 2)
+      .map((entry) => ({ start: entry.segment[0], end: entry.segment[1], uuid: entry.UUID }))
+      .sort((a, b) => a.start - b.start);
+  } catch {
+    // SponsorBlock is best-effort; silently degrade.
+  }
+}
+
+function stopSponsorSkipLoop() {
+  window.clearInterval(state.sponsorCheckTimer);
+  state.sponsorCheckTimer = null;
+}
+
+function startSponsorSkipLoop() {
+  stopSponsorSkipLoop();
+
+  state.sponsorCheckTimer = window.setInterval(() => {
+    if (!state.player || !state.sponsorSegments.length) {
+      return;
+    }
+
+    const currentTime = state.player.getCurrentTime();
+
+    for (const segment of state.sponsorSegments) {
+      if (state.skippedSegmentIds.has(segment.uuid)) {
+        continue;
+      }
+
+      if (currentTime >= segment.start && currentTime < segment.end) {
+        state.skippedSegmentIds.add(segment.uuid);
+        state.player.seekTo(segment.end, true);
+        setStatus("Skipped sponsor segment.");
+        break;
+      }
+    }
+  }, SPONSOR_CHECK_MS);
+}
+
 function loadYouTubeApi() {
   if (state.youtubeReady) {
     return state.youtubeReady;
@@ -592,6 +650,7 @@ async function ensurePlayer() {
           onReady: () => resolve(state.player),
           onStateChange: (event) => {
             if (event.data === window.YT.PlayerState.ENDED) {
+              stopSponsorSkipLoop();
               playNextVideo();
             }
           },
@@ -692,6 +751,7 @@ async function playNextVideo() {
   updateCurrentChannelDisplay();
   setStatus(`Advancing to the next scheduled program on ${row.categoryName}.`);
   state.player.loadVideoById({ videoId: nextVideo.videoId, startSeconds: 0 });
+  fetchSponsorSegments(nextVideo.videoId).then(startSponsorSkipLoop);
 }
 
 async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "full" } = {}) {
@@ -745,6 +805,7 @@ async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "f
       startSeconds: payload.startSeconds,
     });
 
+    fetchSponsorSegments(payload.videoId).then(startSponsorSkipLoop);
     persistCurrentCategory(categoryName);
     showOverlay({ mode });
   } catch (error) {
