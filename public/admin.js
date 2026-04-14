@@ -992,23 +992,54 @@ function showPreviewLoading(container) {
 }
 
 /** @param {HTMLElement} container */
+function createPreviewAvatarPlaceholder() {
+  const placeholder = document.createElement("div");
+  placeholder.className = "channel-preview-avatar-placeholder";
+  placeholder.textContent = "📺";
+  return placeholder;
+}
+
+/**
+ * @param {unknown} thumbnail
+ * @returns {string | null}
+ */
+function getPreviewThumbnailUrl(thumbnail) {
+  if (typeof thumbnail !== "string") {
+    return null;
+  }
+
+  const normalized = thumbnail.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const url = new URL(normalized, window.location.origin);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** @param {HTMLElement} container */
 function showPreviewResult(data, container) {
   const card = document.createElement("div");
   card.className = "channel-preview-card";
+  const thumbnailUrl = getPreviewThumbnailUrl(data.thumbnail);
 
-  if (data.thumbnail) {
+  if (thumbnailUrl) {
     const img = document.createElement("img");
-    img.src = data.thumbnail;
+    img.src = thumbnailUrl;
     img.alt = data.title;
     img.className = "channel-preview-avatar";
     img.width = 40;
     img.height = 40;
+    img.onerror = () => {
+      img.replaceWith(createPreviewAvatarPlaceholder());
+    };
     card.append(img);
   } else {
-    const placeholder = document.createElement("div");
-    placeholder.className = "channel-preview-avatar-placeholder";
-    placeholder.textContent = "📺";
-    card.append(placeholder);
+    card.append(createPreviewAvatarPlaceholder());
   }
 
   const info = document.createElement("div");
