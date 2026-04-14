@@ -61,11 +61,11 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your_secure_password
 ```
 
-`ADMIN_USERNAME` and `ADMIN_PASSWORD` are required to access the admin dashboard. The server will not start if they are missing. `REFRESH_INTERVAL_HOURS` is optional. The default is `24`. You can set it to `12` if you want the cached guide to refresh more often.
+`YOUTUBE_API_KEY`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD` are required. The server will not start if any of them are missing. `REFRESH_INTERVAL_HOURS` is optional. The default is `24`. You can set it to `12` if you want the cached guide to refresh more often.
 
-The server always reads `.env` from the project folder (next to `server.js`), not from whatever directory you run `node` from. Outside of production (`NODE_ENV=production`), values in `.env` override the same variables if they were already set in your shell, so local edits take effect after a restart.
+The server always reads `.env` from the project folder (next to `server.js`), not from whatever directory you run `node` from.
 
-On startup, if `database.json` was updated recently, the server may **skip** a full YouTube refresh to save quota (by default if the file is less than six hours old). The guide can therefore look unchanged even after you change `YOUTUBE_API_KEY`. Set `STARTUP_CACHE_MAX_AGE_HOURS=0` in `.env` to force a refresh on every start, trigger a refresh from the admin UI, or wait for the next scheduled refresh.
+If startup reports a missing environment variable, make sure `.env` exists in the project root beside `server.js` and that you copied it from `.env.example`.
 
 You do not need to manually create `config.json` or `database.json`.
 
@@ -104,7 +104,7 @@ Run in watch mode during development:
 npm run dev
 ```
 
-After editing `.env`, restart the server when using `npm start`; `npm run dev` watches `.env` and restarts automatically.
+After editing `.env`, restart the server. `npm run dev` watches code changes, but `.env` is only read when the process starts.
 
 Once the server is running, open:
 

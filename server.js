@@ -10,12 +10,25 @@ const striptags = require("striptags");
 const rateLimit = require("express-rate-limit");
 const pLimit = require("p-limit");
 
-// Load `.env` from this app directory (not process.cwd()), and let the file win over
-// shell exports in non-production so local edits actually apply after restart.
-dotenv.config({
-  path: path.join(__dirname, ".env"),
-  override: process.env.NODE_ENV !== "production",
-});
+const ROOT_DIR = __dirname;
+const ENV_PATH = path.join(ROOT_DIR, ".env");
+
+// Always load `.env` from the project root so `npm start` works the same
+// no matter which directory the process was launched from.
+dotenv.config({ path: ENV_PATH });
+
+function readRequiredEnv(name) {
+  const value = String(process.env[name] || "").trim();
+
+  if (!value) {
+    console.error(
+      `FATAL ERROR: Missing ${name}. Copy .env.example to ${ENV_PATH} and set ${name} before starting Static Stream.`,
+    );
+    process.exit(1);
+  }
+
+  return value;
+}
 
 /** Caps concurrent YouTube channel fetches per category (quota / burst control). */
 const CHANNEL_FETCH_CONCURRENCY = 3;
@@ -30,13 +43,9 @@ if (process.env.TRUST_PROXY) {
   app.set("trust proxy", Number.isNaN(hops) ? 1 : hops);
 }
 
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-
-if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
-  console.error("FATAL ERROR: ADMIN_USERNAME and ADMIN_PASSWORD must be set in the environment.");
-  process.exit(1);
-}
+const ADMIN_USERNAME = readRequiredEnv("ADMIN_USERNAME");
+const ADMIN_PASSWORD = readRequiredEnv("ADMIN_PASSWORD");
+const YOUTUBE_API_KEY = readRequiredEnv("YOUTUBE_API_KEY");
 
 const adminAuth = basicAuth({
   users: { [ADMIN_USERNAME]: ADMIN_PASSWORD },
@@ -76,9 +85,6 @@ const publicReadLimiter = rateLimit({
 const CSRF_TOKEN = crypto.randomBytes(32).toString("hex");
 
 const REFRESH_INTERVAL_HOURS = Number.parseInt(process.env.REFRESH_INTERVAL_HOURS || "24", 10);
-const parsedStartupCacheHours = Number.parseInt(process.env.STARTUP_CACHE_MAX_AGE_HOURS ?? "6", 10);
-const STARTUP_CACHE_MAX_AGE_HOURS =
-  Number.isFinite(parsedStartupCacheHours) && parsedStartupCacheHours >= 0 ? parsedStartupCacheHours : 6;
 const REFRESH_INTERVAL_MS = Math.max(1, REFRESH_INTERVAL_HOURS) * 60 * 60 * 1000;
 const RECENT_UPLOADS_PER_CHANNEL = 30;
 const DAILY_ROTATION_RECENT_COUNT = 2;
@@ -86,7 +92,6 @@ const DAILY_ROTATION_RANDOM_COUNT = 3;
 const MIN_VIDEO_DURATION_SECONDS = 3 * 60;
 const MAX_VIDEO_DURATION_SECONDS = 3 * 60 * 60;
 
-const ROOT_DIR = __dirname;
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const CONFIG_PATH = path.join(ROOT_DIR, "config.json");
 const DATABASE_PATH = path.join(ROOT_DIR, "database.json");
@@ -643,14 +648,6 @@ async function resolveChannelIdFromHandle(handle, apiKey) {
 }
 
 async function resolveConfigChannels(config) {
-  const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
-  const needsHandleResolution = Object.values(config.categories).some((entries) =>
-    entries.some((e) => !e.channelId && e.handle),
-  );
-  if (needsHandleResolution && !apiKey) {
-    throw createStatusError("YOUTUBE_API_KEY is required to resolve YouTube handles.", 500);
-  }
-
   const categoryEntries = await Promise.all(
     Object.entries(config.categories).map(async ([categoryName, channelEntries]) => {
       const resolvedEntries = await Promise.all(
@@ -660,7 +657,7 @@ async function resolveConfigChannels(config) {
           }
 
           try {
-            const channelId = await resolveChannelIdFromHandle(channelEntry.handle, apiKey);
+            const channelId = await resolveChannelIdFromHandle(channelEntry.handle, YOUTUBE_API_KEY);
             return {
               ...channelEntry,
               channelId,
@@ -846,12 +843,11 @@ async function buildCategoryData(categoryName, channelEntries, apiKey) {
 
 async function buildDatabase(refreshSource = "manual") {
   const config = await readConfig();
-  const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
   const epoch = getWeekEpoch();
 
   const categoryResults = await Promise.all(
     Object.entries(config.categories).map(([categoryName, channelEntries]) =>
-      buildCategoryData(categoryName, channelEntries, apiKey).then((data) => [categoryName, data]),
+      buildCategoryData(categoryName, channelEntries, YOUTUBE_API_KEY).then((data) => [categoryName, data]),
     ),
   );
   const categories = Object.fromEntries(categoryResults);
@@ -908,28 +904,6 @@ function schedulePeriodicRefresh() {
   }, REFRESH_INTERVAL_MS);
 }
 
-/**
- * Returns true when the on-disk database was written recently enough that
- * fetching fresh data from the YouTube API on startup can be skipped.
- * "Fresh" means the database exists and its updatedAt timestamp is no older
- * than STARTUP_CACHE_MAX_AGE_HOURS.
- */
-async function isDatabaseFresh() {
-  try {
-    const database = await readDatabase();
-
-    if (!database.updatedAt) {
-      return false;
-    }
-
-    const ageMs = Date.now() - new Date(database.updatedAt).getTime();
-    const maxAgeMs = STARTUP_CACHE_MAX_AGE_HOURS * 60 * 60 * 1000;
-    return ageMs < maxAgeMs;
-  } catch {
-    return false;
-  }
-}
-
 function resolveLiveSlot(videos, liveOffsetSeconds) {
   let runningDuration = 0;
 
@@ -978,18 +952,11 @@ app.get("/api/channel-preview", authLimiter, adminAuth, async (request, response
     return;
   }
 
-  const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
-
-  if (!apiKey) {
-    response.status(500).json({ error: "YOUTUBE_API_KEY is not configured." });
-    return;
-  }
-
   try {
     const payload = await fetchYouTubeJson("channels", {
       part: "snippet",
       forHandle: rawHandle.replace(/^@/, ""),
-      key: apiKey,
+      key: YOUTUBE_API_KEY,
     });
 
     const item = payload.items?.[0];
@@ -1101,9 +1068,8 @@ app.post("/api/guide/refresh/:category", authLimiter, adminAuth, async (request,
       return;
     }
 
-    const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
     const channelEntries = config.categories[categoryName];
-    const freshCategoryData = await buildCategoryData(categoryName, channelEntries, apiKey);
+    const freshCategoryData = await buildCategoryData(categoryName, channelEntries, YOUTUBE_API_KEY);
 
     const updatedDatabase = {
       ...database,
@@ -1190,18 +1156,10 @@ async function start() {
   await ensureDataFiles();
   schedulePeriodicRefresh();
 
-  const fresh = await isDatabaseFresh();
-
-  if (fresh) {
-    console.log(
-      `[startup] Database is less than ${STARTUP_CACHE_MAX_AGE_HOURS} hours old — skipping YouTube API refresh.`,
-    );
-  } else {
-    try {
-      await refreshDatabase("startup");
-    } catch (error) {
-      console.error("Failed to refresh Static Stream database:", error.message);
-    }
+  try {
+    await refreshDatabase("startup");
+  } catch (error) {
+    console.error("Failed to refresh Static Stream database:", error.message);
   }
 
   app.listen(PORT, () => {
