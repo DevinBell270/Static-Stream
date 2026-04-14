@@ -164,8 +164,15 @@ app.use(
         // Allow inline / JS-set styles for the TV schedule layout and small UI tweaks.
         // Script remains locked down; this only relaxes style attribution.
         styleSrc: ["'self'", "'unsafe-inline'"],
-        // YouTube thumbnail images come from these CDNs.
-        imgSrc: ["'self'", "https://i.ytimg.com", "https://img.youtube.com", "data:"],
+        // Video thumbnails and channel avatars are served from different YouTube CDNs.
+        imgSrc: [
+          "'self'",
+          "https://i.ytimg.com",
+          "https://img.youtube.com",
+          "https://yt3.ggpht.com",
+          "https://yt3.googleusercontent.com",
+          "data:",
+        ],
         // No plugins, objects, or base-URI shenanigans.
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
