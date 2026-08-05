@@ -22,7 +22,7 @@
           </div>
           <h1 class="guide-heading">Live TV Guide</h1>
           <p id="guide-subtitle" class="guide-subtitle">
-            Click any listing below to tune the player, then move the mouse or press a key to reopen the guide.
+            Click any listing below to tune the player. Shortcuts: <kbd>C</kbd> Subtitles · <kbd>Space</kbd> Mute · <kbd>↑</kbd><kbd>↓</kbd> Guide · <kbd>←</kbd><kbd>→</kbd> Channel · <kbd>Esc</kbd> Hide
           </p>
         </section>
 
@@ -32,6 +32,14 @@
           <p id="current-meta" class="current-meta">
             Static Stream syncs each category to the same live timeline for every viewer.
           </p>
+          <div class="player-controls">
+            <button id="subtitle-toggle" class="control-btn" type="button" aria-pressed="false">
+              <span class="control-icon">💬</span> CC Subtitles: OFF
+            </button>
+            <button id="mute-toggle" class="control-btn" type="button" aria-pressed="false">
+              <span class="control-icon">🔊</span> Mute: OFF
+            </button>
+          </div>
           <div id="tv-status" class="tv-status" role="status" aria-live="polite"></div>
         </section>
       </div>

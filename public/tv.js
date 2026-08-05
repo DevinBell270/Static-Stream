@@ -9,6 +9,7 @@ const OVERLAY_HIDE_DELAY_MS = 2800;
 const SPONSOR_CHECK_MS = 1000;
 const SPONSORBLOCK_API = "https://sponsor.ajay.app";
 const STORAGE_KEY = "staticStreamCurrentCategory";
+const SUBTITLES_STORAGE_KEY = "staticStreamSubtitlesEnabled";
 
 function readSavedCategory() {
   if (typeof localStorage === "undefined") {
@@ -33,6 +34,30 @@ function persistCurrentCategory(categoryName) {
 
   try {
     localStorage.setItem(STORAGE_KEY, categoryName);
+  } catch {
+    // Private mode, quota, or disabled storage — ignore.
+  }
+}
+
+function readSavedSubtitles() {
+  if (typeof localStorage === "undefined") {
+    return false;
+  }
+
+  try {
+    return localStorage.getItem(SUBTITLES_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function persistSubtitles(enabled) {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+
+  try {
+    localStorage.setItem(SUBTITLES_STORAGE_KEY, String(enabled));
   } catch {
     // Private mode, quota, or disabled storage — ignore.
   }
@@ -68,6 +93,7 @@ const state = {
   sponsorSegments: [],
   skippedSegmentIds: new Set(),
   sponsorCheckTimer: null,
+  subtitlesEnabled: readSavedSubtitles(),
 };
 
 const elements = {
@@ -85,10 +111,88 @@ const elements = {
   staleBanner: document.querySelector("#stale-banner"),
   staleBannerDetail: document.querySelector("#stale-banner-detail"),
   staleBannerClose: document.querySelector("#stale-banner-close"),
+  subtitleToggle: document.querySelector("#subtitle-toggle"),
+  muteToggle: document.querySelector("#mute-toggle"),
 };
 
 function setStatus(message) {
   elements.status.textContent = message;
+}
+
+function applySubtitlesState(enabled) {
+  if (!state.player) {
+    return;
+  }
+
+  try {
+    if (enabled) {
+      if (typeof state.player.loadModule === "function") {
+        state.player.loadModule("captions");
+        state.player.loadModule("cc");
+      }
+      if (typeof state.player.setOption === "function") {
+        state.player.setOption("captions", "track", { languageCode: "en" });
+        state.player.setOption("cc", "track", { languageCode: "en" });
+      }
+    } else {
+      if (typeof state.player.unloadModule === "function") {
+        state.player.unloadModule("captions");
+        state.player.unloadModule("cc");
+      }
+      if (typeof state.player.setOption === "function") {
+        state.player.setOption("captions", "track", {});
+        state.player.setOption("cc", "track", {});
+      }
+    }
+  } catch {
+    // Best effort caption toggle; ignore if unsupported on specific track
+  }
+}
+
+function updateSubtitleToggleUI() {
+  if (!elements.subtitleToggle) {
+    return;
+  }
+
+  const enabled = state.subtitlesEnabled;
+  elements.subtitleToggle.classList.toggle("active", enabled);
+  elements.subtitleToggle.setAttribute("aria-pressed", String(enabled));
+  elements.subtitleToggle.innerHTML = `<span class="control-icon">💬</span> CC Subtitles: ${enabled ? "ON" : "OFF"}`;
+}
+
+function updateMuteToggleUI() {
+  if (!elements.muteToggle || !state.player) {
+    return;
+  }
+
+  const isMuted = typeof state.player.isMuted === "function" ? state.player.isMuted() : false;
+  elements.muteToggle.classList.toggle("active", isMuted);
+  elements.muteToggle.setAttribute("aria-pressed", String(isMuted));
+  elements.muteToggle.innerHTML = `<span class="control-icon">${isMuted ? "🔇" : "🔊"}</span> Mute: ${isMuted ? "ON" : "OFF"}`;
+}
+
+function toggleSubtitles() {
+  state.subtitlesEnabled = !state.subtitlesEnabled;
+  persistSubtitles(state.subtitlesEnabled);
+  applySubtitlesState(state.subtitlesEnabled);
+  updateSubtitleToggleUI();
+  setStatus(state.subtitlesEnabled ? "Subtitles enabled." : "Subtitles disabled.");
+}
+
+function toggleMute() {
+  if (!state.player) {
+    return;
+  }
+
+  if (state.player.isMuted()) {
+    state.player.unMute();
+    setStatus("Audio unmuted.");
+  } else {
+    state.player.mute();
+    setStatus("Audio muted.");
+  }
+
+  updateMuteToggleUI();
 }
 
 function clearOverlayHideTimer() {
@@ -650,10 +754,23 @@ async function ensurePlayer() {
           disablekb: 1,
           modestbranding: 1,
           rel: 0,
+          fs: 0,
+          iv_load_policy: 3,
+          cc_load_policy: 0,
+          playsinline: 1,
         },
         events: {
-          onReady: () => resolve(state.player),
+          onReady: () => {
+            applySubtitlesState(state.subtitlesEnabled);
+            updateSubtitleToggleUI();
+            updateMuteToggleUI();
+            resolve(state.player);
+          },
           onStateChange: (event) => {
+            if (event.data === window.YT.PlayerState.PLAYING) {
+              applySubtitlesState(state.subtitlesEnabled);
+              updateMuteToggleUI();
+            }
             if (event.data === window.YT.PlayerState.ENDED) {
               stopSponsorSkipLoop();
               playNextVideo();
@@ -756,6 +873,7 @@ async function playNextVideo() {
   updateCurrentChannelDisplay();
   setStatus(`Advancing to the next scheduled program on ${row.categoryName}.`);
   state.player.loadVideoById({ videoId: nextVideo.videoId, startSeconds: 0 });
+  applySubtitlesState(state.subtitlesEnabled);
   fetchSponsorSegments(nextVideo.videoId).then(startSponsorSkipLoop);
 }
 
@@ -814,6 +932,7 @@ async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "f
       videoId: payload.videoId,
       startSeconds: payload.startSeconds,
     });
+    applySubtitlesState(state.subtitlesEnabled);
 
     fetchSponsorSegments(payload.videoId).then(startSponsorSkipLoop);
     persistCurrentCategory(categoryName);
@@ -925,6 +1044,20 @@ function initializeInteractions() {
     showOverlay({ mode: "full" });
   });
 
+  if (elements.subtitleToggle) {
+    elements.subtitleToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleSubtitles();
+    });
+  }
+
+  if (elements.muteToggle) {
+    elements.muteToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleMute();
+    });
+  }
+
   elements.guideGrid.addEventListener("click", handleGuideClick);
   elements.guideGrid.addEventListener("scroll", () => {
     if (!state.programmaticScroll) {
@@ -934,6 +1067,16 @@ function initializeInteractions() {
     updatePlayheadPosition();
   });
   window.addEventListener("keydown", (event) => {
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
+      return;
+    }
+
+    if (event.key === "c" || event.key === "C") {
+      event.preventDefault();
+      toggleSubtitles();
+      return;
+    }
+
     if (event.key === "ArrowUp") {
       event.preventDefault();
       handleVerticalNav(-1);
@@ -971,15 +1114,7 @@ function initializeInteractions() {
 
     if (event.key === " " || event.code === "Space") {
       event.preventDefault();
-      if (state.player) {
-        if (state.player.isMuted()) {
-          state.player.unMute();
-          setStatus("Audio unmuted.");
-        } else {
-          state.player.mute();
-          setStatus("Audio muted.");
-        }
-      }
+      toggleMute();
       return;
     }
 
@@ -1005,6 +1140,8 @@ function initializeInteractions() {
 
 async function initializeTv() {
   initializeInteractions();
+  updateSubtitleToggleUI();
+  updateMuteToggleUI();
   showOverlay({ persist: true, mode: "info" });
   setStatus("Loading TV guide...");
 
