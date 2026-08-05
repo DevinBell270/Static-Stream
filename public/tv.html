@@ -14,24 +14,20 @@
     <div id="hover-surface" class="hover-surface" aria-hidden="true"></div>
 
     <section id="guide-overlay" class="guide-overlay visible" aria-label="Electronic program guide">
-      <div class="overlay-header">
-        <section class="guide-hero">
-          <div class="metadata-topline">
-            <p class="guide-kicker">Static Stream</p>
-            <a class="admin-link" href="/admin.html">Open Admin</a>
-          </div>
-          <h1 class="guide-heading">Live TV Guide</h1>
-          <p id="guide-subtitle" class="guide-subtitle">
-            Click any listing below to tune the player. Shortcuts: <kbd>C</kbd> Subtitles · <kbd>Space</kbd> Mute · <kbd>↑</kbd><kbd>↓</kbd> Guide · <kbd>←</kbd><kbd>→</kbd> Channel · <kbd>Esc</kbd> Hide
-          </p>
-        </section>
-
-        <section class="metadata-panel" aria-label="Current channel details">
+      <header class="top-info-bar" aria-label="Current channel and player settings">
+        <div class="top-info-brand">
+          <span class="guide-kicker">Static Stream</span>
           <p id="current-category" class="current-category">No category selected</p>
+        </div>
+
+        <div class="top-info-main">
           <h2 id="current-title" class="current-title">Choose a category to tune in.</h2>
           <p id="current-meta" class="current-meta">
             Static Stream syncs each category to the same live timeline for every viewer.
           </p>
+        </div>
+
+        <div class="top-info-actions">
           <div class="player-controls">
             <button id="subtitle-toggle" class="control-btn" type="button" aria-pressed="false">
               <span class="control-icon">💬</span> CC Subtitles: OFF
@@ -40,9 +36,10 @@
               <span class="control-icon">🔊</span> Mute: OFF
             </button>
           </div>
-          <div id="tv-status" class="tv-status" role="status" aria-live="polite"></div>
-        </section>
-      </div>
+          <a class="admin-gear-btn" href="/admin.html" aria-label="Open Admin Settings" title="Open Admin Settings">⚙</a>
+        </div>
+        <div id="tv-status" class="tv-status" role="status" aria-live="polite"></div>
+      </header>
 
       <section class="epg-grid-shell">
         <div class="timebar-shell">
