@@ -384,10 +384,15 @@ kbd {
   background: rgba(30, 64, 175, 0.24);
 }
 
-.epg-row.focused .channel-label {
-  outline: 2px solid rgba(96, 165, 250, 0.85);
+.epg-row.focused {
+  background: rgba(96, 165, 250, 0.08);
+}
+
+.epg-row.channel-focused .channel-label {
+  outline: 2px solid rgba(96, 165, 250, 0.95);
   outline-offset: -2px;
-  background: rgba(30, 64, 175, 0.35);
+  background: rgba(30, 64, 175, 0.45);
+  box-shadow: 0 0 12px rgba(96, 165, 250, 0.4);
 }
 
 .channel-label:hover {
@@ -461,6 +466,15 @@ kbd {
   border-color: rgba(250, 204, 21, 0.75);
   box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.35), 0 4px 16px rgba(0, 0, 0, 0.4);
   z-index: 5;
+}
+
+.program-block.focused {
+  border-color: #facc15 !important;
+  background: rgba(250, 204, 21, 0.28) !important;
+  outline: 3px solid #facc15 !important;
+  outline-offset: -3px;
+  z-index: 10 !important;
+  box-shadow: 0 0 20px rgba(250, 204, 21, 0.5), 0 4px 16px rgba(0, 0, 0, 0.6) !important;
 }
 
 .program-block.live {
