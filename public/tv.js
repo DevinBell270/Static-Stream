@@ -413,7 +413,6 @@ function createEmptyRow(row) {
   const emptyBlock = document.createElement("div");
   const number = document.createElement("span");
   const name = document.createElement("strong");
-  const count = document.createElement("span");
 
   rowElement.className = "epg-row";
   rowElement.dataset.category = row.categoryName;
@@ -423,12 +422,10 @@ function createEmptyRow(row) {
   label.dataset.category = row.categoryName;
   number.className = "channel-number";
   name.className = "channel-name";
-  count.className = "channel-count";
   number.textContent = `CH ${row.channelNumber}`;
   name.textContent = row.categoryName;
-  count.textContent = "0 playable videos";
 
-  label.append(number, name, count);
+  label.append(number, name);
 
   scroller.className = "timeline-scroller";
   track.className = "timeline-track";
@@ -456,7 +453,6 @@ function createRowElement(row, nowMs) {
   const track = document.createElement("div");
   const number = document.createElement("span");
   const name = document.createElement("strong");
-  const count = document.createElement("span");
   const segments = buildSegmentsForRow(row, nowMs);
 
   rowElement.className = "epg-row";
@@ -467,11 +463,9 @@ function createRowElement(row, nowMs) {
   label.dataset.category = row.categoryName;
   number.className = "channel-number";
   name.className = "channel-name";
-  count.className = "channel-count";
   number.textContent = `CH ${row.channelNumber}`;
   name.textContent = row.categoryName;
-  count.textContent = `${row.videos.length} playable video${row.videos.length === 1 ? "" : "s"}`;
-  label.append(number, name, count);
+  label.append(number, name);
 
   scroller.className = "timeline-scroller";
   track.className = "timeline-track";
@@ -480,6 +474,7 @@ function createRowElement(row, nowMs) {
   segments.forEach((segment) => {
     const block = document.createElement("button");
     const title = document.createElement("span");
+    const titleText = document.createElement("span");
     const meta = document.createElement("span");
 
     block.type = "button";
@@ -491,6 +486,7 @@ function createRowElement(row, nowMs) {
     block.dataset.absoluteEnd = String(segment.absoluteEndMs);
     block.style.left = `${segment.leftPx}px`;
     block.style.width = `${segment.widthPx}px`;
+    block.title = `${segment.video.title} (${formatClock(segment.absoluteStartMs)} - ${formatClock(segment.absoluteEndMs)})`;
     block.setAttribute(
       "aria-label",
       `${row.categoryName}, ${segment.video.title}, ${formatClock(segment.absoluteStartMs)} to ${formatClock(segment.absoluteEndMs)}`,
@@ -501,8 +497,11 @@ function createRowElement(row, nowMs) {
     }
 
     title.className = "program-title";
+    titleText.className = "program-title-text";
+    titleText.textContent = segment.video.title;
+    title.append(titleText);
+
     meta.className = "program-meta";
-    title.textContent = segment.video.title;
     meta.textContent = `${formatClock(segment.absoluteStartMs)} - ${formatClock(segment.absoluteEndMs)} · ${formatDuration(segment.video.durationSeconds || 0)}`;
 
     block.append(title, meta);
