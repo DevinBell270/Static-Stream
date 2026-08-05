@@ -9,6 +9,27 @@
 </head>
 
 <body>
+  <div id="standby-overlay" class="standby-overlay" role="dialog" aria-label="Power On Standby Screen">
+    <div class="standby-led-container" title="Standby Mode">
+      <span class="standby-led"></span>
+      <span class="standby-led-label">STANDBY</span>
+    </div>
+
+    <div class="standby-card">
+      <div class="standby-header">
+        <div class="standby-brand">STATIC STREAM</div>
+        <div class="standby-model">CRT-2000 • LIVE TV</div>
+      </div>
+      
+      <button id="power-on-btn" class="power-on-btn" type="button" aria-label="Power On Static Stream">
+        <span class="power-icon" aria-hidden="true">⏻</span>
+        <span class="power-text">POWER ON</span>
+      </button>
+
+      <p class="standby-prompt">PRESS ANY KEY OR CLICK TO POWER ON</p>
+    </div>
+  </div>
+
   <main class="tv-shell">
     <div id="player" class="player-frame" aria-label="Static Stream player"></div>
     <div id="hover-surface" class="hover-surface" aria-hidden="true"></div>

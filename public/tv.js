@@ -74,7 +74,10 @@ const markerLabelFormatter = new Intl.DateTimeFormat([], {
   weekday: "short",
 });
 
+let isPoweredOn = false;
+
 const state = {
+  isPoweredOn: false,
   guide: { categories: {} },
   rows: [],
   playerReady: null,
@@ -98,6 +101,8 @@ const state = {
 };
 
 const elements = {
+  standbyOverlay: document.querySelector("#standby-overlay"),
+  powerOnBtn: document.querySelector("#power-on-btn"),
   overlay: document.querySelector("#guide-overlay"),
   hoverSurface: document.querySelector("#hover-surface"),
   currentCategory: document.querySelector("#current-category"),
@@ -965,6 +970,17 @@ async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "f
       videoId: payload.videoId,
       startSeconds: payload.startSeconds,
     });
+
+    if (!isPoweredOn) {
+      if (typeof state.player.mute === "function") {
+        state.player.mute();
+      }
+    } else {
+      if (typeof state.player.unMute === "function") {
+        state.player.unMute();
+      }
+    }
+
     applySubtitlesState(state.subtitlesEnabled);
 
     fetchSponsorSegments(payload.videoId).then(startSponsorSkipLoop);
@@ -1255,6 +1271,10 @@ function initializeInteractions() {
     updatePlayheadPosition();
   });
   window.addEventListener("keydown", (event) => {
+    if (!isPoweredOn) {
+      return;
+    }
+
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
       return;
     }
@@ -1326,7 +1346,69 @@ function initializeInteractions() {
   });
 }
 
+function handlePowerOnKey(event) {
+  if (["Shift", "Control", "Alt", "Meta"].includes(event.key)) {
+    return;
+  }
+  handlePowerOn();
+}
+
+function handlePowerOn() {
+  if (isPoweredOn) {
+    return;
+  }
+  isPoweredOn = true;
+  state.isPoweredOn = true;
+
+  window.removeEventListener("keydown", handlePowerOnKey);
+
+  const standbyOverlay = elements.standbyOverlay || document.querySelector("#standby-overlay");
+  if (standbyOverlay) {
+    standbyOverlay.classList.add("crt-wake");
+    window.setTimeout(() => {
+      standbyOverlay.style.display = "none";
+    }, 400);
+  }
+
+  if (state.player) {
+    try {
+      if (typeof state.player.unMute === "function") {
+        state.player.unMute();
+      }
+      if (typeof state.player.setVolume === "function") {
+        state.player.setVolume(100);
+      }
+      if (typeof state.player.playVideo === "function") {
+        state.player.playVideo();
+      }
+      updateMuteToggleUI();
+    } catch {
+      // Ignore player call errors
+    }
+  }
+
+  const availableCategory = state.rows.find((row) => row.videos.length > 0);
+  const savedName = readSavedCategory();
+  const savedRow = savedName ? getRowByCategory(savedName) : null;
+  const categoryToTune = savedRow && savedRow.videos.length > 0 ? savedRow : availableCategory;
+
+  if (categoryToTune) {
+    tuneIntoCategory(categoryToTune.categoryName, { mode: "info" });
+  } else {
+    showOverlay({ mode: "info" });
+  }
+}
+
+function setupStandbyOverlay() {
+  const standbyOverlay = elements.standbyOverlay || document.querySelector("#standby-overlay");
+  if (standbyOverlay) {
+    standbyOverlay.addEventListener("click", handlePowerOn);
+  }
+  window.addEventListener("keydown", handlePowerOnKey);
+}
+
 async function initializeTv() {
+  setupStandbyOverlay();
   initializeInteractions();
   updateSubtitleToggleUI();
   updateMuteToggleUI();
