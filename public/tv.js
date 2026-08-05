@@ -809,9 +809,11 @@ async function loadGuide() {
   state.guide = payload;
   buildRows();
 
-  elements.subtitle.textContent = state.rows.length
-    ? "Click any listing below to tune the player to that channel's live feed."
-    : "No guide data exists yet. Add channels from the admin dashboard first.";
+  if (elements.subtitle) {
+    elements.subtitle.textContent = state.rows.length
+      ? "Click any listing below to tune the player to that channel's live feed."
+      : "No guide data exists yet. Add channels from the admin dashboard first.";
+  }
 }
 
 /**
