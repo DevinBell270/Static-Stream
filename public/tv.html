@@ -50,11 +50,15 @@
 
         <div class="top-info-actions">
           <div class="player-controls">
-            <button id="subtitle-toggle" class="control-btn" type="button" aria-pressed="false">
-              <span class="control-icon">💬</span> CC Subtitles: OFF
+            <button id="subtitle-toggle" class="control-btn toggle-btn" type="button" aria-pressed="false" aria-label="Toggle Subtitles" title="Toggle Subtitles (C)">
+              <span class="control-icon" aria-hidden="true">💬</span>
+              <span class="control-label">Subtitles</span>
+              <span class="toggle-pill" aria-hidden="true">OFF</span>
             </button>
-            <button id="mute-toggle" class="control-btn" type="button" aria-pressed="false">
-              <span class="control-icon">🔊</span> Mute: OFF
+            <button id="mute-toggle" class="control-btn toggle-btn" type="button" aria-pressed="false" aria-label="Toggle Sound" title="Toggle Mute (Space)">
+              <span class="control-icon" aria-hidden="true">🔊</span>
+              <span class="control-label">Sound</span>
+              <span class="toggle-pill" aria-hidden="true">ON</span>
             </button>
           </div>
           <a class="admin-gear-btn" href="/admin.html" aria-label="Open Admin Settings" title="Open Admin Settings">⚙</a>

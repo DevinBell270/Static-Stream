@@ -163,18 +163,47 @@ function updateSubtitleToggleUI() {
   const enabled = state.subtitlesEnabled;
   elements.subtitleToggle.classList.toggle("active", enabled);
   elements.subtitleToggle.setAttribute("aria-pressed", String(enabled));
-  elements.subtitleToggle.innerHTML = `<span class="control-icon">💬</span> CC Subtitles: ${enabled ? "ON" : "OFF"}`;
+
+  const iconSpan = elements.subtitleToggle.querySelector(".control-icon");
+  const labelSpan = elements.subtitleToggle.querySelector(".control-label");
+  const pillSpan = elements.subtitleToggle.querySelector(".toggle-pill");
+
+  if (iconSpan && labelSpan && pillSpan) {
+    iconSpan.textContent = "💬";
+    labelSpan.textContent = "Subtitles";
+    pillSpan.textContent = enabled ? "ON" : "OFF";
+  } else {
+    elements.subtitleToggle.innerHTML = `<span class="control-icon" aria-hidden="true">💬</span><span class="control-label">Subtitles</span><span class="toggle-pill" aria-hidden="true">${enabled ? "ON" : "OFF"}</span>`;
+  }
 }
 
-function updateMuteToggleUI() {
-  if (!elements.muteToggle || !state.player) {
+function updateMuteToggleUI(overrideIsMuted) {
+  if (!elements.muteToggle) {
     return;
   }
 
-  const isMuted = typeof state.player.isMuted === "function" ? state.player.isMuted() : false;
-  elements.muteToggle.classList.toggle("active", isMuted);
-  elements.muteToggle.setAttribute("aria-pressed", String(isMuted));
-  elements.muteToggle.innerHTML = `<span class="control-icon">${isMuted ? "🔇" : "🔊"}</span> Mute: ${isMuted ? "ON" : "OFF"}`;
+  const isMuted = typeof overrideIsMuted === "boolean"
+    ? overrideIsMuted
+    : (state.player && typeof state.player.isMuted === "function" ? state.player.isMuted() : false);
+  const soundActive = !isMuted;
+
+  elements.muteToggle.classList.toggle("active", soundActive);
+  elements.muteToggle.setAttribute("aria-pressed", String(soundActive));
+
+  const iconSpan = elements.muteToggle.querySelector(".control-icon");
+  const labelSpan = elements.muteToggle.querySelector(".control-label");
+  const pillSpan = elements.muteToggle.querySelector(".toggle-pill");
+
+  const icon = soundActive ? "🔊" : "🔇";
+  const statusText = soundActive ? "ON" : "OFF";
+
+  if (iconSpan && labelSpan && pillSpan) {
+    iconSpan.textContent = icon;
+    labelSpan.textContent = "Sound";
+    pillSpan.textContent = statusText;
+  } else {
+    elements.muteToggle.innerHTML = `<span class="control-icon" aria-hidden="true">${icon}</span><span class="control-label">Sound</span><span class="toggle-pill" aria-hidden="true">${statusText}</span>`;
+  }
 }
 
 function toggleSubtitles() {
@@ -190,15 +219,17 @@ function toggleMute() {
     return;
   }
 
-  if (state.player.isMuted()) {
+  const currentlyMuted = typeof state.player.isMuted === "function" ? state.player.isMuted() : false;
+
+  if (currentlyMuted) {
     state.player.unMute();
     setStatus("Audio unmuted.");
+    updateMuteToggleUI(false);
   } else {
     state.player.mute();
     setStatus("Audio muted.");
+    updateMuteToggleUI(true);
   }
-
-  updateMuteToggleUI();
 }
 
 function clearOverlayHideTimer() {
@@ -1381,7 +1412,7 @@ function handlePowerOn() {
       if (typeof state.player.playVideo === "function") {
         state.player.playVideo();
       }
-      updateMuteToggleUI();
+      updateMuteToggleUI(false);
     } catch {
       // Ignore player call errors
     }
