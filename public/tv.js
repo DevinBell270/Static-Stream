@@ -74,13 +74,17 @@ const markerLabelFormatter = new Intl.DateTimeFormat([], {
   weekday: "short",
 });
 
+let isPoweredOn = false;
+
 const state = {
+  isPoweredOn: false,
   guide: { categories: {} },
   rows: [],
   playerReady: null,
   youtubeReady: null,
   currentCategory: null,
   focusedCategory: null,
+  focusedProgramIndex: null,
   currentVideoId: null,
   liveTimer: null,
   guideHideTimer: null,
@@ -97,6 +101,8 @@ const state = {
 };
 
 const elements = {
+  standbyOverlay: document.querySelector("#standby-overlay"),
+  powerOnBtn: document.querySelector("#power-on-btn"),
   overlay: document.querySelector("#guide-overlay"),
   hoverSurface: document.querySelector("#hover-surface"),
   currentCategory: document.querySelector("#current-category"),
@@ -211,6 +217,10 @@ function showOverlay({ persist = false, mode = "full" } = {}) {
     elements.overlay.classList.add("info-only");
   } else {
     elements.overlay.classList.remove("info-only");
+    if (!state.focusedCategory && state.currentCategory) {
+      state.focusedCategory = state.currentCategory;
+      refreshSelectionStyles();
+    }
   }
 
   clearOverlayHideTimer();
@@ -518,15 +528,28 @@ function refreshSelectionStyles() {
   const rows = elements.guideGrid.querySelectorAll(".epg-row");
   const blocks = elements.guideGrid.querySelectorAll(".program-block");
 
+  let targetedBlock = null;
+  if (state.focusedCategory && state.focusedProgramIndex !== null) {
+    const focusedRowElement = Array.from(rows).find((r) => r.dataset.category === state.focusedCategory);
+    if (focusedRowElement) {
+      const rowBlocks = Array.from(focusedRowElement.querySelectorAll(".program-block:not(.empty)"));
+      targetedBlock = rowBlocks[state.focusedProgramIndex] || null;
+    }
+  }
+
   rows.forEach((row) => {
-    row.classList.toggle("selected", row.dataset.category === state.currentCategory);
-    row.classList.toggle("focused", row.dataset.category === state.focusedCategory);
+    const isSelected = row.dataset.category === state.currentCategory;
+    const isFocused = row.dataset.category === state.focusedCategory;
+    row.classList.toggle("selected", isSelected);
+    row.classList.toggle("focused", isFocused);
+    row.classList.toggle("channel-focused", isFocused && state.focusedProgramIndex === null);
   });
 
   blocks.forEach((block) => {
     const isSelectedRow = block.dataset.category === state.currentCategory;
     const isLiveBlock = block.dataset.live === "true";
     block.classList.toggle("selected", isSelectedRow && isLiveBlock);
+    block.classList.toggle("focused", block === targetedBlock);
   });
 }
 
@@ -947,6 +970,17 @@ async function tuneIntoCategory(categoryName, { userInitiated = false, mode = "f
       videoId: payload.videoId,
       startSeconds: payload.startSeconds,
     });
+
+    if (!isPoweredOn) {
+      if (typeof state.player.mute === "function") {
+        state.player.mute();
+      }
+    } else {
+      if (typeof state.player.unMute === "function") {
+        state.player.unMute();
+      }
+    }
+
     applySubtitlesState(state.subtitlesEnabled);
 
     fetchSponsorSegments(payload.videoId).then(startSponsorSkipLoop);
@@ -981,6 +1015,8 @@ function handleGuideClick(event) {
   const label = event.target.closest(".channel-label");
 
   if (label?.dataset.category) {
+    state.focusedCategory = label.dataset.category;
+    state.focusedProgramIndex = null;
     tuneIntoCategory(label.dataset.category, { userInitiated: true });
     return;
   }
@@ -991,10 +1027,18 @@ function handleGuideClick(event) {
     return;
   }
 
+  state.focusedCategory = block.dataset.category;
+  const rowElement = block.closest(".epg-row");
+  if (rowElement) {
+    const blocks = Array.from(rowElement.querySelectorAll(".program-block:not(.empty)"));
+    const idx = blocks.indexOf(block);
+    state.focusedProgramIndex = idx >= 0 ? idx : null;
+  }
+
   tuneIntoCategory(block.dataset.category, { userInitiated: true });
 }
 
-function scrollToFocusedRow() {
+function scrollToFocusedElement() {
   const targetCategory = state.focusedCategory || state.currentCategory;
   if (!targetCategory) return;
 
@@ -1002,21 +1046,76 @@ function scrollToFocusedRow() {
     (el) => el.dataset.category === targetCategory
   );
 
-  if (rowElement) {
-    const rowRect = rowElement.getBoundingClientRect();
-    const gridRect = elements.guideGrid.getBoundingClientRect();
+  if (!rowElement) return;
 
-    if (rowRect.top < gridRect.top || rowRect.bottom > gridRect.bottom) {
-      state.programmaticScroll = true;
-      elements.guideGrid.scrollBy({
-        top: rowRect.top < gridRect.top
-          ? rowRect.top - gridRect.top
-          : rowRect.bottom - gridRect.bottom,
-        behavior: "smooth",
-      });
-      window.setTimeout(() => { state.programmaticScroll = false; }, 350);
-    }
+  state.programmaticScroll = true;
+
+  /* ── Vertical: keep the focused row visible ── */
+  const gridRect = elements.guideGrid.getBoundingClientRect();
+  const rowRect = rowElement.getBoundingClientRect();
+  const VERTICAL_PAD = 10;
+
+  let targetScrollTop = elements.guideGrid.scrollTop;
+
+  if (rowRect.top < gridRect.top) {
+    // Row is above the visible area — scroll up
+    targetScrollTop += (rowRect.top - gridRect.top) - VERTICAL_PAD;
+  } else if (rowRect.bottom > gridRect.bottom) {
+    // Row is below the visible area — scroll down
+    targetScrollTop += (rowRect.bottom - gridRect.bottom) + VERTICAL_PAD;
   }
+
+  targetScrollTop = Math.max(0, targetScrollTop);
+
+  /* ── Horizontal: keep the focused program block visible ── */
+  let targetScrollLeft = elements.guideGrid.scrollLeft;
+  const labelWidth = document.querySelector(".timebar-label")?.offsetWidth || 220;
+  const HORIZONTAL_PAD = 40;
+
+  if (state.focusedProgramIndex !== null) {
+    const rowBlocks = Array.from(rowElement.querySelectorAll(".program-block:not(.empty)"));
+    const focusedBlock = rowBlocks[state.focusedProgramIndex];
+
+    if (focusedBlock) {
+      const blockRect = focusedBlock.getBoundingClientRect();
+      // The visible timeline area starts after the sticky channel label
+      const timelineLeft = gridRect.left + labelWidth;
+      const timelineRight = gridRect.right;
+
+      if (blockRect.left < timelineLeft) {
+        // Block is hidden behind or before the label column — scroll left
+        targetScrollLeft += (blockRect.left - timelineLeft) - HORIZONTAL_PAD;
+      } else if (blockRect.right > timelineRight) {
+        // Block extends past the right edge — scroll right
+        targetScrollLeft += (blockRect.right - timelineRight) + HORIZONTAL_PAD;
+      }
+
+      targetScrollLeft = Math.max(0, targetScrollLeft);
+    }
+  } else {
+    // Channel-level focus (no program selected) — scroll to the "now" position
+    const nowPx = getPixelsFromWindowStart(Date.now());
+    const maxScrollLeft = Math.max((labelWidth + state.scheduleWidthPx) - elements.guideGrid.clientWidth, 0);
+    targetScrollLeft = Math.min(Math.max(nowPx - 20, 0), maxScrollLeft);
+  }
+
+  elements.guideGrid.scrollTo({
+    top: targetScrollTop,
+    left: targetScrollLeft,
+    behavior: "auto",
+  });
+
+  syncTimebarScroll();
+  updatePlayheadPosition();
+
+  // Reset programmatic scroll flag after a short delay so the UI doesn't
+  // treat this as a user-initiated scroll.
+  window.clearTimeout(state._scrollResetTimer);
+  state._scrollResetTimer = window.setTimeout(() => {
+    state.programmaticScroll = false;
+    syncTimebarScroll();
+    updatePlayheadPosition();
+  }, 100);
 }
 
 function handleVerticalNav(step) {
@@ -1025,8 +1124,9 @@ function handleVerticalNav(step) {
   if (!isFullMode) {
     showOverlay({ persist: true, mode: "full" });
     state.focusedCategory = state.currentCategory;
+    state.focusedProgramIndex = null;
     refreshSelectionStyles();
-    window.setTimeout(scrollToFocusedRow, 10);
+    window.setTimeout(scrollToFocusedElement, 10);
     return;
   }
 
@@ -1043,9 +1143,98 @@ function handleVerticalNav(step) {
   if (nextIndex < 0) nextIndex = playableRows.length - 1;
   if (nextIndex >= playableRows.length) nextIndex = 0;
 
-  state.focusedCategory = playableRows[nextIndex].categoryName;
+  const targetCategory = playableRows[nextIndex].categoryName;
+  const prevCategory = state.focusedCategory;
+  state.focusedCategory = targetCategory;
+
+  if (state.focusedProgramIndex !== null) {
+    const prevRowElement = Array.from(elements.guideGrid.querySelectorAll(".epg-row")).find(
+      (el) => el.dataset.category === prevCategory
+    );
+    const targetRowElement = Array.from(elements.guideGrid.querySelectorAll(".epg-row")).find(
+      (el) => el.dataset.category === targetCategory
+    );
+
+    if (prevRowElement && targetRowElement) {
+      const prevBlocks = Array.from(prevRowElement.querySelectorAll(".program-block:not(.empty)"));
+      const targetBlocks = Array.from(targetRowElement.querySelectorAll(".program-block:not(.empty)"));
+      const currentBlock = prevBlocks[state.focusedProgramIndex];
+
+      if (currentBlock && targetBlocks.length) {
+        const curStart = Number(currentBlock.dataset.absoluteStart);
+        const curEnd = Number(currentBlock.dataset.absoluteEnd);
+        const midTime = (curStart + curEnd) / 2;
+
+        let bestIndex = 0;
+        let minDiff = Infinity;
+
+        targetBlocks.forEach((tb, i) => {
+          const tStart = Number(tb.dataset.absoluteStart);
+          const tEnd = Number(tb.dataset.absoluteEnd);
+
+          if (midTime >= tStart && midTime < tEnd) {
+            bestIndex = i;
+            minDiff = 0;
+          } else if (minDiff > 0) {
+            const diff = Math.abs(midTime - (tStart + tEnd) / 2);
+            if (diff < minDiff) {
+              minDiff = diff;
+              bestIndex = i;
+            }
+          }
+        });
+
+        state.focusedProgramIndex = bestIndex;
+      } else if (targetBlocks.length) {
+        state.focusedProgramIndex = Math.min(state.focusedProgramIndex, targetBlocks.length - 1);
+      } else {
+        state.focusedProgramIndex = null;
+      }
+    }
+  }
+
   refreshSelectionStyles();
-  scrollToFocusedRow();
+  scrollToFocusedElement();
+}
+
+function handleHorizontalNav(step) {
+  const isFullMode = elements.overlay.classList.contains("visible") && !elements.overlay.classList.contains("info-only");
+
+  if (!isFullMode) {
+    changeChannel(step, "info");
+    return;
+  }
+
+  showOverlay({ persist: true, mode: "full" });
+
+  const currentFocus = state.focusedCategory || state.currentCategory;
+  const rowElement = Array.from(elements.guideGrid.querySelectorAll(".epg-row")).find(
+    (el) => el.dataset.category === currentFocus
+  );
+
+  if (!rowElement) return;
+
+  const rowBlocks = Array.from(rowElement.querySelectorAll(".program-block:not(.empty)"));
+
+  if (!rowBlocks.length) return;
+
+  if (state.focusedProgramIndex === null) {
+    if (step > 0) {
+      let liveIndex = rowBlocks.findIndex((b) => b.dataset.live === "true");
+      if (liveIndex < 0) liveIndex = 0;
+      state.focusedProgramIndex = liveIndex;
+    }
+  } else {
+    const nextIndex = state.focusedProgramIndex + step;
+    if (nextIndex < 0) {
+      state.focusedProgramIndex = null;
+    } else if (nextIndex < rowBlocks.length) {
+      state.focusedProgramIndex = nextIndex;
+    }
+  }
+
+  refreshSelectionStyles();
+  scrollToFocusedElement();
 }
 
 function initializeInteractions() {
@@ -1082,6 +1271,10 @@ function initializeInteractions() {
     updatePlayheadPosition();
   });
   window.addEventListener("keydown", (event) => {
+    if (!isPoweredOn) {
+      return;
+    }
+
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
       return;
     }
@@ -1117,13 +1310,13 @@ function initializeInteractions() {
 
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      changeChannel(-1, "info");
+      handleHorizontalNav(-1);
       return;
     }
 
     if (event.key === "ArrowRight") {
       event.preventDefault();
-      changeChannel(1, "info");
+      handleHorizontalNav(1);
       return;
     }
 
@@ -1153,7 +1346,69 @@ function initializeInteractions() {
   });
 }
 
+function handlePowerOnKey(event) {
+  if (["Shift", "Control", "Alt", "Meta"].includes(event.key)) {
+    return;
+  }
+  handlePowerOn();
+}
+
+function handlePowerOn() {
+  if (isPoweredOn) {
+    return;
+  }
+  isPoweredOn = true;
+  state.isPoweredOn = true;
+
+  window.removeEventListener("keydown", handlePowerOnKey);
+
+  const standbyOverlay = elements.standbyOverlay || document.querySelector("#standby-overlay");
+  if (standbyOverlay) {
+    standbyOverlay.classList.add("crt-wake");
+    window.setTimeout(() => {
+      standbyOverlay.style.display = "none";
+    }, 400);
+  }
+
+  if (state.player) {
+    try {
+      if (typeof state.player.unMute === "function") {
+        state.player.unMute();
+      }
+      if (typeof state.player.setVolume === "function") {
+        state.player.setVolume(100);
+      }
+      if (typeof state.player.playVideo === "function") {
+        state.player.playVideo();
+      }
+      updateMuteToggleUI();
+    } catch {
+      // Ignore player call errors
+    }
+  }
+
+  const availableCategory = state.rows.find((row) => row.videos.length > 0);
+  const savedName = readSavedCategory();
+  const savedRow = savedName ? getRowByCategory(savedName) : null;
+  const categoryToTune = savedRow && savedRow.videos.length > 0 ? savedRow : availableCategory;
+
+  if (categoryToTune) {
+    tuneIntoCategory(categoryToTune.categoryName, { mode: "info" });
+  } else {
+    showOverlay({ mode: "info" });
+  }
+}
+
+function setupStandbyOverlay() {
+  const standbyOverlay = elements.standbyOverlay || document.querySelector("#standby-overlay");
+  if (standbyOverlay) {
+    standbyOverlay.addEventListener("click", handlePowerOn);
+  }
+  window.addEventListener("keydown", handlePowerOnKey);
+}
+
 async function initializeTv() {
+  setupStandbyOverlay();
   initializeInteractions();
   updateSubtitleToggleUI();
   updateMuteToggleUI();

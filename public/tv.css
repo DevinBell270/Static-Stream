@@ -384,10 +384,15 @@ kbd {
   background: rgba(30, 64, 175, 0.24);
 }
 
-.epg-row.focused .channel-label {
-  outline: 2px solid rgba(96, 165, 250, 0.85);
+.epg-row.focused {
+  background: rgba(96, 165, 250, 0.08);
+}
+
+.epg-row.channel-focused .channel-label {
+  outline: 2px solid rgba(96, 165, 250, 0.95);
   outline-offset: -2px;
-  background: rgba(30, 64, 175, 0.35);
+  background: rgba(30, 64, 175, 0.45);
+  box-shadow: 0 0 12px rgba(96, 165, 250, 0.4);
 }
 
 .channel-label:hover {
@@ -461,6 +466,15 @@ kbd {
   border-color: rgba(250, 204, 21, 0.75);
   box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.35), 0 4px 16px rgba(0, 0, 0, 0.4);
   z-index: 5;
+}
+
+.program-block.focused {
+  border-color: #facc15 !important;
+  background: rgba(250, 204, 21, 0.28) !important;
+  outline: 3px solid #facc15 !important;
+  outline-offset: -3px;
+  z-index: 10 !important;
+  box-shadow: 0 0 20px rgba(250, 204, 21, 0.5), 0 4px 16px rgba(0, 0, 0, 0.6) !important;
 }
 
 .program-block.live {
@@ -677,4 +691,165 @@ kbd {
 .stale-banner-close:focus-visible {
   outline: 2px solid rgba(251, 191, 36, 0.7);
   outline-offset: 2px;
+}
+
+/* ── Standby / Power On Overlay ── */
+.standby-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #0a0a0c;
+  background-image: 
+    radial-gradient(circle at center, rgba(30, 41, 59, 0.45) 0%, rgba(10, 10, 12, 0.98) 75%),
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.3) 50%);
+  background-size: 100% 100%, 100% 4px;
+  color: #e2e8f0;
+  font-family: "Courier New", Courier, monospace;
+  user-select: none;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 350ms cubic-bezier(0.4, 0, 0.2, 1), transform 350ms cubic-bezier(0.4, 0, 0.2, 1), filter 350ms ease;
+}
+
+/* CRT Wake Transition Class */
+.standby-overlay.crt-wake {
+  opacity: 0;
+  transform: scale(1.08);
+  filter: brightness(1.8) contrast(1.2);
+  pointer-events: none;
+}
+
+/* Corner Standby Red LED Indicator */
+.standby-led-container {
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+}
+
+.standby-led {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #ef4444;
+  box-shadow: 0 0 8px #ef4444, 0 0 14px rgba(239, 68, 68, 0.6);
+  animation: ledPulse 2s infinite ease-in-out;
+}
+
+@keyframes ledPulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 8px #ef4444, 0 0 14px rgba(239, 68, 68, 0.6);
+  }
+  50% {
+    opacity: 0.4;
+    box-shadow: 0 0 3px #ef4444, 0 0 6px rgba(239, 68, 68, 0.3);
+  }
+}
+
+/* Central Retro Card */
+.standby-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 2.5rem 3rem;
+  background: rgba(15, 23, 42, 0.88);
+  border: 2px solid rgba(96, 165, 250, 0.35);
+  border-radius: 12px;
+  box-shadow: 
+    0 0 35px rgba(0, 0, 0, 0.85),
+    0 0 18px rgba(96, 165, 250, 0.2),
+    inset 0 0 25px rgba(96, 165, 250, 0.05);
+  text-align: center;
+  max-width: 440px;
+  width: 90%;
+}
+
+.standby-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.standby-brand {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: #60a5fa;
+  text-shadow: 0 0 12px rgba(96, 165, 250, 0.6);
+}
+
+.standby-model {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  color: #64748b;
+}
+
+/* Power On Button */
+.power-on-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.85rem 2rem;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border: 2px solid #60a5fa;
+  border-radius: 8px;
+  color: #38bdf8;
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  box-shadow: 0 0 14px rgba(96, 165, 250, 0.35);
+  transition: all 200ms ease;
+}
+
+.power-on-btn:hover {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border-color: #93c5fd;
+  color: #ffffff;
+  box-shadow: 0 0 22px rgba(96, 165, 250, 0.65);
+  transform: translateY(-2px);
+}
+
+.power-on-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 0 10px rgba(96, 165, 250, 0.4);
+}
+
+.power-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.standby-prompt {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  color: #cbd5e1;
+  text-shadow: 0 0 6px rgba(203, 213, 225, 0.3);
+  animation: promptBlink 1.6s infinite ease-in-out;
+}
+
+@keyframes promptBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
