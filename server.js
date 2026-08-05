@@ -504,9 +504,33 @@ function normalizeConfig(input) {
   return { categories };
 }
 
+let cachedConfig = null;
+let configReadInFlight = null;
+
+async function writeConfig(config) {
+  await atomicWriteJson(CONFIG_PATH, config);
+  cachedConfig = config;
+}
+
 async function readConfig() {
-  const config = await readJson(CONFIG_PATH, DEFAULT_CONFIG);
-  return normalizeConfig(config);
+  if (cachedConfig !== null) {
+    return cachedConfig;
+  }
+
+  if (configReadInFlight) {
+    return configReadInFlight;
+  }
+
+  configReadInFlight = (async () => {
+    const rawConfig = await readJson(CONFIG_PATH, DEFAULT_CONFIG);
+    const normalized = normalizeConfig(rawConfig);
+    cachedConfig = normalized;
+    return normalized;
+  })().finally(() => {
+    configReadInFlight = null;
+  });
+
+  return configReadInFlight;
 }
 
 async function readDatabaseFromDisk() {
@@ -640,18 +664,21 @@ async function fetchYouTubeJson(endpoint, searchParams) {
 
 async function resolveChannelIdFromHandle(handle, apiKey) {
   const payload = await fetchYouTubeJson("channels", {
-    part: "id",
+    part: "id,contentDetails",
     forHandle: handle.replace(/^@/, ""),
     key: apiKey,
   });
 
-  const channelId = payload.items?.[0]?.id;
+  const item = payload.items?.[0];
+  const channelId = item?.id;
 
   if (!channelId) {
     throw createStatusError(`No YouTube channel was found for handle "${handle}".`, 400);
   }
 
-  return channelId;
+  const uploadsPlaylistId = item?.contentDetails?.relatedPlaylists?.uploads || null;
+
+  return { channelId, uploadsPlaylistId };
 }
 
 async function resolveConfigChannels(config) {
@@ -664,7 +691,7 @@ async function resolveConfigChannels(config) {
           }
 
           try {
-            const channelId = await resolveChannelIdFromHandle(channelEntry.handle, YOUTUBE_API_KEY);
+            const { channelId } = await resolveChannelIdFromHandle(channelEntry.handle, YOUTUBE_API_KEY);
             return {
               ...channelEntry,
               channelId,
@@ -688,6 +715,12 @@ async function resolveConfigChannels(config) {
 }
 
 async function getUploadsPlaylistId(channelId, apiKey) {
+  // Every standard YouTube channel ID starting with "UC" maps deterministically
+  // to its uploads playlist ID by converting the prefix to "UU".
+  if (typeof channelId === "string" && channelId.startsWith("UC")) {
+    return `UU${channelId.slice(2)}`;
+  }
+
   const payload = await fetchYouTubeJson("channels", {
     part: "contentDetails",
     id: channelId,
@@ -936,6 +969,28 @@ function resolveLiveSlot(videos, liveOffsetSeconds) {
   };
 }
 
+function verifyCsrfToken(request, response, next) {
+  const incomingToken = request.headers["x-csrf-token"];
+
+  if (!incomingToken || typeof incomingToken !== "string") {
+    response.status(403).json({ error: "Invalid or missing CSRF token." });
+    return;
+  }
+
+  const incomingBuffer = Buffer.from(incomingToken);
+  const targetBuffer = Buffer.from(CSRF_TOKEN);
+
+  if (
+    incomingBuffer.length !== targetBuffer.length ||
+    !crypto.timingSafeEqual(incomingBuffer, targetBuffer)
+  ) {
+    response.status(403).json({ error: "Invalid or missing CSRF token." });
+    return;
+  }
+
+  next();
+}
+
 // Expose the CSRF token only to authenticated admin sessions.
 app.get("/api/csrf-token", authLimiter, adminAuth, (request, response) => {
   response.json({ csrfToken: CSRF_TOKEN });
@@ -1008,19 +1063,11 @@ app.get("/api/config", authLimiter, adminAuth, async (request, response) => {
   }
 });
 
-app.post("/api/config", authLimiter, adminAuth, async (request, response) => {
-  // Validate CSRF token — must match the value issued by GET /api/csrf-token.
-  const incomingToken = request.headers["x-csrf-token"];
-
-  if (!incomingToken || !crypto.timingSafeEqual(Buffer.from(incomingToken), Buffer.from(CSRF_TOKEN))) {
-    response.status(403).json({ error: "Invalid or missing CSRF token." });
-    return;
-  }
-
+app.post("/api/config", authLimiter, adminAuth, verifyCsrfToken, async (request, response) => {
   try {
     validateConfigSchema(request.body);
     const nextConfig = await resolveConfigChannels(normalizeConfig(request.body));
-    await atomicWriteJson(CONFIG_PATH, nextConfig);
+    await writeConfig(nextConfig);
     const database = await refreshDatabase("config_update");
 
     response.json({
@@ -1054,15 +1101,7 @@ app.get("/api/guide", publicReadLimiter, async (request, response) => {
  * Body: (empty)
  * Response: { category: string, guide: <updated database> }
  */
-app.post("/api/guide/refresh/:category", authLimiter, adminAuth, async (request, response) => {
-  // Validate CSRF token.
-  const incomingToken = request.headers["x-csrf-token"];
-
-  if (!incomingToken || !crypto.timingSafeEqual(Buffer.from(incomingToken), Buffer.from(CSRF_TOKEN))) {
-    response.status(403).json({ error: "Invalid or missing CSRF token." });
-    return;
-  }
-
+app.post("/api/guide/refresh/:category", authLimiter, adminAuth, verifyCsrfToken, async (request, response) => {
   const categoryName = request.params.category;
 
   try {

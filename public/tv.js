@@ -530,6 +530,7 @@ function shouldRebuildSchedule(nowMs = Date.now()) {
 function refreshLiveBlockState() {
   const blocks = elements.guideGrid.querySelectorAll(".program-block:not(.empty)");
   const nowMs = Date.now();
+  let nextBoundaryMs = Infinity;
 
   blocks.forEach((block) => {
     const startMs = Number(block.dataset.absoluteStart);
@@ -538,8 +539,17 @@ function refreshLiveBlockState() {
 
     block.dataset.live = String(isLive);
     block.classList.toggle("live", isLive);
+
+    if (isLive) {
+      if (endMs > nowMs && endMs < nextBoundaryMs) {
+        nextBoundaryMs = endMs;
+      }
+    } else if (startMs > nowMs && startMs < nextBoundaryMs) {
+      nextBoundaryMs = startMs;
+    }
   });
 
+  state.nextLiveBoundaryMs = Number.isFinite(nextBoundaryMs) ? nextBoundaryMs : nowMs + 60000;
   refreshSelectionStyles();
 }
 
@@ -548,10 +558,14 @@ function tickLiveState() {
     return;
   }
 
-  if (shouldRebuildSchedule()) {
+  const nowMs = Date.now();
+
+  if (shouldRebuildSchedule(nowMs)) {
     renderSchedule({ centerOnNow: true });
   } else {
-    refreshLiveBlockState();
+    if (nowMs >= (state.nextLiveBoundaryMs || 0)) {
+      refreshLiveBlockState();
+    }
     updatePlayheadPosition();
   }
 

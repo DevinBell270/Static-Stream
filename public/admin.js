@@ -535,6 +535,7 @@ function renderCategories() {
     ...filteredEntries.map(({ categoryName, channelEntries, visibleChannelEntries }) => {
       const card = document.createElement("article");
       card.className = "category-card";
+      card.dataset.category = categoryName;
       const collapsed = normalizedFilterQuery.length > 0 ? false : isCategoryCollapsed(categoryName);
       card.classList.toggle("collapsed", collapsed);
 
@@ -577,8 +578,15 @@ function renderCategories() {
           return;
         }
 
-        setCategoryCollapsed(categoryName, !isCategoryCollapsed(categoryName));
-        render();
+        const nextCollapsed = !isCategoryCollapsed(categoryName);
+        setCategoryCollapsed(categoryName, nextCollapsed);
+        card.classList.toggle("collapsed", nextCollapsed);
+        toggleButton.setAttribute("aria-expanded", String(!nextCollapsed));
+        const list = card.querySelector(".channel-list");
+        if (list) {
+          list.hidden = nextCollapsed;
+        }
+        syncToggleAllCategoriesButton();
       });
       header.append(toggleButton);
 
@@ -1135,7 +1143,24 @@ elements.toggleAllCategoriesButton.addEventListener("click", () => {
     setCategoryCollapsed(categoryName, collapseAll);
   });
 
-  render();
+  const cards = elements.categoriesContainer.querySelectorAll(".category-card");
+  cards.forEach((card) => {
+    const categoryName = card.dataset.category;
+    if (categoryName) {
+      const collapsed = isCategoryCollapsed(categoryName);
+      card.classList.toggle("collapsed", collapsed);
+      const toggleBtn = card.querySelector(".category-card-toggle");
+      if (toggleBtn) {
+        toggleBtn.setAttribute("aria-expanded", String(!collapsed));
+      }
+      const list = card.querySelector(".channel-list");
+      if (list) {
+        list.hidden = collapsed;
+      }
+    }
+  });
+
+  syncToggleAllCategoriesButton();
 });
 
 if (elements.settingsMenu) {
